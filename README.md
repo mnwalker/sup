@@ -35,8 +35,8 @@ project's own name, `sup`.
 ### AppImage
 
 ```bash
-chmod +x Sup-0.1.0-x86_64.AppImage
-./Sup-0.1.0-x86_64.AppImage
+chmod +x supbar-0.1.0-x86_64.AppImage
+./supbar-0.1.0-x86_64.AppImage
 ```
 
 ### Windows

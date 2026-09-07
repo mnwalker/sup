@@ -15,10 +15,10 @@
     "dev": "SUP_DEV=1 electron .",
     "probe": "node scripts/probe.js",
     "test": "node --test test/*.test.js",
-    "dist:deb": "electron-builder --linux deb",
-    "dist:linux": "electron-builder --linux deb AppImage",
-    "dist:win": "electron-builder --win nsis portable",
-    "pack": "electron-builder --dir"
+    "dist:deb": "electron-builder --linux deb --publish never",
+    "dist:linux": "electron-builder --linux deb AppImage --publish never",
+    "dist:win": "electron-builder --win nsis portable --publish never",
+    "pack": "electron-builder --dir --publish never"
   },
   "dependencies": {
     "sql.js": "^1.14.0"

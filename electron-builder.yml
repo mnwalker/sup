@@ -53,7 +53,7 @@ deb:
     - xdg-utils
 
 appImage:
-  artifactName: ${productName}-${version}-${arch}.AppImage
+  artifactName: ${name}-${version}-${arch}.AppImage
 
 win:
   target:
