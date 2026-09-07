@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, nativeImage } = require('electron');
 
 const settings = require('./settings');
@@ -10,6 +11,33 @@ const { providers } = require('./providers');
 const autostart = require('./autostart');
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
+
+/**
+ * A packaged Windows app has no console to print to, so when diagnostics are
+ * asked for, mirror them into a file next to the settings.
+ */
+function startDebugLog() {
+  if (!process.env.SUP_DEV) return;
+  try {
+    const file = path.join(settings.appConfigDir(), 'sup.log');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `Sup ${app.getVersion()} on ${process.platform} ${process.arch}\n`);
+    for (const level of ['log', 'warn', 'error']) {
+      const original = console[level].bind(console);
+      console[level] = (...args) => {
+        original(...args);
+        try {
+          fs.appendFileSync(file, `${args.join(' ')}\n`);
+        } catch {
+          /* the log is a convenience, never a reason to fail */
+        }
+      };
+    }
+    console.log(`[sup] diagnostics written to ${file}`);
+  } catch {
+    /* no diagnostics available; carry on */
+  }
+}
 
 let win = null;
 let tray = null;
@@ -60,12 +88,29 @@ function applyBounds() {
   }
 }
 
+/**
+ * Show the tab, once, from whichever signal arrives first.
+ *
+ * `ready-to-show` is not dependable for a frameless transparent window —
+ * notably on Windows, where it can simply never fire, leaving the app running
+ * with a tray icon and nothing on screen. So take the first of three chances
+ * and make the call idempotent.
+ */
+function showWindow(reason) {
+  if (!win || win.isDestroyed() || win.isVisible()) return;
+  win.showInactive();
+  applyBounds();
+  if (process.env.SUP_DEV) {
+    console.log(`[sup] shown via ${reason}: ${JSON.stringify(win.getBounds())} visible=${win.isVisible()}`);
+  }
+}
+
 function createWindow() {
   const config = settings.load();
   const size = placement.collapsedSize(config);
   const bounds = placement.boundsFor(config, areaFor(config), size);
 
-  win = new BrowserWindow({
+  const options = {
     ...bounds,
     show: false,
     frame: false,
@@ -78,29 +123,60 @@ function createWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     hasShadow: false,
-    focusable: false,
     alwaysOnTop: true,
-    type: process.platform === 'linux' ? config.windowType : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
-  });
+  };
 
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // An unfocusable window keeps X11 window managers from stealing focus when
+  // the pointer crosses it, but on Windows it can stop the window appearing at
+  // all — and there is nothing there to steal focus in the first place.
+  if (process.platform !== 'win32') options.focusable = false;
+  if (process.platform === 'linux') options.type = config.windowType;
+
+  const created = new BrowserWindow(options);
+  win = created;
+
+  win.setAlwaysOnTop(true, config.alwaysOnTopLevel || 'screen-saver');
+  // macOS and Linux only; on Windows older Electron builds threw here.
+  if (process.platform !== 'win32') {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  win.once('ready-to-show', () => {
-    win.showInactive();
-    applyBounds();
+  win.once('ready-to-show', () => showWindow('ready-to-show'));
+  win.webContents.once('did-finish-load', () => showWindow('did-finish-load'));
+  const fallback = setTimeout(() => showWindow('fallback timer'), 3000);
+
+  win.webContents.on('did-fail-load', (_e, code, description) => {
+    console.error(`Sup: the tab failed to load (${code} ${description}).`);
   });
 
   win.on('closed', () => {
-    win = null;
+    clearTimeout(fallback);
+    // A replacement window may already have been created by then.
+    if (win === created) win = null;
   });
+}
+
+/**
+ * Transparency is fixed when a window is created, so changing it means a new
+ * window — but not a new process. Relaunching cannot be relied on: for the
+ * portable Windows build `process.execPath` is a temporary extraction that no
+ * longer exists by the time it is re-run, so the app just exits and never
+ * comes back.
+ */
+function recreateWindow() {
+  const old = win;
+  win = null;
+  expanded = false;
+  if (old && !old.isDestroyed()) old.destroy();
+  createWindow();
 }
 
 function sendConfig() {
@@ -177,6 +253,16 @@ function refreshTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Refresh now', click: () => poller.refreshNow() },
+      {
+        label: 'Show tab (reset position)',
+        click: () => {
+          if (!win || win.isDestroyed()) createWindow();
+          else {
+            win.showInactive();
+            applyBounds();
+          }
+        },
+      },
       { type: 'separator' },
       { label: 'Edge', submenu: edgeItems },
       { label: 'Screen', submenu: displayItems },
@@ -187,7 +273,8 @@ function refreshTrayMenu() {
         checked: config.transparent !== false,
         click: (item) => {
           settings.save({ transparent: item.checked });
-          relaunch();
+          recreateWindow();
+          refreshTrayMenu();
         },
       },
       {
@@ -201,11 +288,6 @@ function refreshTrayMenu() {
       { label: 'Quit Sup', click: () => app.quit() },
     ])
   );
-}
-
-function relaunch() {
-  app.relaunch();
-  app.exit(0);
 }
 
 function wireIpc() {
@@ -241,6 +323,7 @@ function main() {
   }
 
   configurePlatform();
+  app.whenReady().then(startDebugLog);
   app.on('second-instance', () => poller && poller.refreshNow());
   app.on('window-all-closed', () => {}); // tray-only app: never quit on close
 

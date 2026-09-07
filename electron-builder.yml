@@ -60,6 +60,12 @@ win:
     - nsis
     - portable
   icon: assets/icon.png
+  # "Sup.Setup.0.1.1.exe" next to "Sup.0.1.1.exe" gives no clue which is the
+  # installer and which is the standalone app.
+  artifactName: ${name}-${version}-installer.${ext}
+
+portable:
+  artifactName: ${name}-${version}-portable.${ext}
 
 nsis:
   oneClick: false

@@ -33,8 +33,10 @@ const DEFAULTS = {
   transparent: true,
   /** Keep the tab out of the way until you point at the edge. */
   peekOnly: false,
-  /** X11 window type hint. 'toolbar' behaves best on most WMs. */
+  /** X11 window type hint (Linux only). 'toolbar' behaves best on most WMs. */
   windowType: 'toolbar',
+  /** How aggressively to stay on top: normal | floating | screen-saver. */
+  alwaysOnTopLevel: 'screen-saver',
   /** Optional manual Cursor session cookie (`<userId>::<jwt>`). */
   cursorCookie: null,
   /** Blink the tab's dot while a session is running. Costs one repaint/sec. */
@@ -67,4 +69,4 @@ function save(patch) {
   return next;
 }
 
-module.exports = { load, save, DEFAULTS, FILE };
+module.exports = { load, save, DEFAULTS, FILE, appConfigDir };

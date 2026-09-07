@@ -21,7 +21,7 @@ tools do.
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./supbar_0.1.1_amd64.deb
+sudo apt install ./supbar_0.1.2_amd64.deb
 supbar
 ```
 
@@ -35,15 +35,20 @@ project's own name, `sup`.
 ### AppImage
 
 ```bash
-chmod +x supbar-0.1.1-x86_64.AppImage
-./supbar-0.1.1-x86_64.AppImage
+chmod +x supbar-0.1.2-x86_64.AppImage
+./supbar-0.1.2-x86_64.AppImage
 ```
 
 ### Windows
 
-Run the NSIS installer, or use the portable `.exe`. Same codebase, same
-providers; the only differences are where credentials live (handled
-automatically) and that Antigravity discovery is Linux-only for now.
+Run the NSIS installer, or use the portable `.exe`. The builds are unsigned, so
+SmartScreen will warn before it lets you run either — *More info* then *Run
+anyway*. Same codebase and same providers as Linux; the differences are that
+Antigravity discovery is Linux-only, and that without process matching (also
+Linux-only) a finished session cannot be told apart from a closed one.
+
+If the tray icon appears but no tab does, use **Show tab (reset position)** in
+the tray menu, and see the diagnostics below.
 
 ## What it reads, and from where
 
@@ -168,6 +173,21 @@ npm run probe -- antigravity --raw   # dump the language server's replies
   `cursorCookie`.
 - **Antigravity shows "not running"** — quota is only readable while the IDE is
   open; it lives in the language server, not on disk.
+- **Tray icon but no tab on screen** — try *Show tab (reset position)* in the
+  tray menu, then untick *Transparent background* (some setups cannot composite
+  a transparent window). To capture what happened, run with diagnostics on:
+
+  ```powershell
+  $env:SUP_DEV=1; & "$env:LOCALAPPDATA\Programs\Sup\supbar.exe"
+  ```
+
+  ```bash
+  SUP_DEV=1 supbar
+  ```
+
+  That writes `sup.log` next to `settings.json` (`%APPDATA%\Sup` on Windows,
+  `~/.config/sup` elsewhere), recording the window's bounds and how it was
+  shown.
 
 ## Development
 
