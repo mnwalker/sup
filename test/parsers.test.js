@@ -9,6 +9,8 @@ const cursor = require('../src/main/providers/cursor')._internal;
 const antigravity = require('../src/main/providers/antigravity')._internal;
 const placement = require('../src/main/placement');
 const { worstWindow } = require('../src/main/lib/shape');
+const { deriveState, classifyTool } = require('../src/main/lib/sessions');
+const { kindOf } = require('../src/main/lib/processes');
 
 test('claude: maps the oauth usage payload to windows', () => {
   const windows = claude.windowsFromUsage({
@@ -36,12 +38,40 @@ test('claude: includes extra usage credits only when enabled', () => {
   assert.equal(windows[0].limit, 5000);
 });
 
-test('claude: a trailing tool_use means it is still working', () => {
-  const working = [{ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use' }] } }];
-  const waiting = [{ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } }];
-  assert.equal(claude.classifyClaudeRecords(working), 'working');
-  assert.equal(claude.classifyClaudeRecords(waiting), 'waiting');
-  assert.equal(claude.classifyClaudeRecords([]), 'unknown');
+test('claude: reads cwd, branch and stop_reason off the transcript', () => {
+  const info = claude.parseClaudeSession([
+    { type: 'user', cwd: '/home/me/code/shop', gitBranch: 'main', message: { role: 'user', content: 'go' } },
+    { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } },
+  ]);
+  assert.equal(info.cwd, '/home/me/code/shop');
+  assert.equal(info.branch, 'main');
+  assert.equal(info.lastStop, 'end_turn');
+  assert.equal(info.pending, null);
+});
+
+test('claude: an unanswered tool call is pending, an answered one is not', () => {
+  const use = { type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'Bash' }] } };
+  const result = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1' }] } };
+
+  assert.equal(claude.parseClaudeSession([use]).pending.name, 'Bash');
+  assert.equal(claude.parseClaudeSession([use, result]).pending, null);
+});
+
+test('claude: only the current turn counts as pending', () => {
+  // An older call whose result fell outside the tail window must not look live.
+  const old = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'old', name: 'Read' }] } };
+  const prompt = { type: 'user', message: { role: 'user', content: 'next thing please' } };
+  const done = { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] } };
+
+  assert.equal(claude.parseClaudeSession([old, prompt, done]).pending, null);
+});
+
+test('claude: a Task call is a background agent, not ordinary work', () => {
+  const task = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'Task' }] } };
+  assert.equal(claude.parseClaudeSession([task]).pending.background, true);
+
+  const bg = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { run_in_background: true } }] } };
+  assert.equal(claude.parseClaudeSession([bg]).pending.background, true);
 });
 
 test('codex: finds rate limits wherever they are nested', () => {
@@ -70,9 +100,20 @@ test('codex: null rate limits are not mistaken for data', () => {
   assert.equal(codex.findRateLimits({ payload: { type: 'token_count', rate_limits: null } }), null);
 });
 
-test('codex: classifies the last transcript event', () => {
-  assert.equal(codex.classifyCodexRecords([{ payload: { type: 'agent_message' } }]), 'waiting');
-  assert.equal(codex.classifyCodexRecords([{ payload: { type: 'exec_command_begin' } }]), 'working');
+test('codex: takes the project from the rollout, not the dated path', () => {
+  const info = codex.parseCodexSession([
+    { timestamp: 't', payload: { type: 'session_meta', cwd: '/home/me/code/infra' } },
+    { timestamp: 't', payload: { type: 'agent_message' } },
+  ]);
+  assert.equal(info.cwd, '/home/me/code/infra');
+  assert.equal(info.lastStop, 'end_turn');
+});
+
+test('codex: an unfinished shell command is pending', () => {
+  const begin = { payload: { type: 'exec_command_begin', call_id: 'c1' } };
+  const end = { payload: { type: 'exec_command_end', call_id: 'c1' } };
+  assert.ok(codex.parseCodexSession([begin]).pending);
+  assert.equal(codex.parseCodexSession([begin, end]).pending, null);
 });
 
 test('cursor: builds the session cookie from the stored jwt', () => {
@@ -132,6 +173,29 @@ test('antigravity: fractional utilisation is scaled to a percentage', () => {
   assert.equal(w.percent, 42);
 });
 
+test('session state: a dead process means stopped, then inactive', () => {
+  const base = { pending: null, lastStop: 'end_turn', alive: false };
+  assert.equal(deriveState({ ...base, ageMs: 5 * 60 * 1000 }), 'stopped');
+  assert.equal(deriveState({ ...base, ageMs: 5 * 60 * 60 * 1000 }), 'inactive');
+});
+
+test('session state: a live session is placed by what it is waiting on', () => {
+  const live = { alive: true, ageMs: 10 * 60 * 1000 };
+  assert.equal(deriveState({ ...live, pending: { name: 'Task', background: true } }), 'agents');
+  assert.equal(deriveState({ ...live, pending: { name: 'AskUserQuestion', prompt: true } }), 'input');
+  assert.equal(deriveState({ ...live, pending: { name: 'Bash' } }), 'active');
+  assert.equal(deriveState({ ...live, pending: null, lastStop: 'end_turn' }), 'input');
+});
+
+test('session state: a fresh write beats everything else', () => {
+  assert.equal(deriveState({ ageMs: 1000, pending: null, lastStop: 'end_turn', alive: true }), 'active');
+});
+
+test('session state: a long-idle live session stops claiming to wait', () => {
+  const old = { ageMs: 6 * 60 * 60 * 1000, pending: null, lastStop: 'end_turn', alive: true };
+  assert.equal(deriveState(old), 'inactive');
+});
+
 test('placement: the tab centres on the chosen edge', () => {
   const config = {
     edge: 'top',
@@ -187,6 +251,13 @@ test('placement: an offset past the edge is clamped back on screen', () => {
   const area = { x: 0, y: 0, width: 1920, height: 1080 };
   const bounds = placement.boundsFor(config, area, placement.collapsedSize(config));
   assert.equal(bounds.x, 1920 - 190);
+});
+
+test('processes: recognises the agent CLIs without matching our own app', () => {
+  assert.equal(kindOf({ argv: ['/usr/local/bin/claude', '--resume'] }), 'claude');
+  assert.equal(kindOf({ argv: ['node', '/opt/tools/codex'] }), 'codex');
+  assert.equal(kindOf({ argv: ['/opt/Sup/supbar'] }), null);
+  assert.equal(kindOf({ argv: ['/usr/bin/claude-helper'] }), null);
 });
 
 test('shape: the fullest window is the one the tab shows', () => {

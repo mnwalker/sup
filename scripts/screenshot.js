@@ -32,7 +32,13 @@ const SNAPSHOT = {
         { key: 'seven_day', label: 'Weekly (all models)', percent: 41, resetsAt: iso(74), detail: null },
         { key: 'seven_day_opus', label: 'Weekly Opus', percent: 12, resetsAt: iso(74), detail: null },
       ],
-      session: { state: 'working', since: new Date().toISOString(), project: 'checkout-api' },
+      session: { state: 'input', since: iso(-0.05), project: 'holidayrentals', counts: { input: 1, agents: 1, active: 1, stopped: 1 } },
+      sessions: [
+        sess('holidayrentals', 'main', 'input', 3),
+        sess('checkout-api', 'feat/payments', 'agents', 0.6, 'Task'),
+        sess('sup', 'master', 'active', 0.1),
+        sess('landing-site', 'main', 'stopped', 14),
+      ],
     },
     {
       id: 'codex',
@@ -46,7 +52,8 @@ const SNAPSHOT = {
         { key: 'primary', label: 'Session (5h)', percent: 88, resetsAt: iso(0.7), detail: null },
         { key: 'secondary', label: 'Weekly', percent: 34, resetsAt: iso(96), detail: null },
       ],
-      session: { state: 'waiting', since: new Date().toISOString(), project: 'infra' },
+      session: { state: 'active', since: iso(-0.01), project: 'infra', counts: { active: 1, inactive: 1 } },
+      sessions: [sess('infra', null, 'active', 0.2), sess('scratch', null, 'inactive', 320)],
     },
     {
       id: 'cursor',
@@ -57,7 +64,8 @@ const SNAPSHOT = {
       plan: 'pro',
       detail: null,
       windows: [{ key: 'included', label: 'Included usage', percent: 96, resetsAt: iso(240), detail: '$19.20 of $20.00' }],
-      session: { state: 'idle', since: null, project: null },
+      session: { state: 'unknown', since: null, project: null },
+      sessions: [],
     },
     {
       id: 'antigravity',
@@ -69,12 +77,28 @@ const SNAPSHOT = {
       detail: 'Antigravity does not appear to be installed.',
       windows: [],
       session: { state: 'unknown', since: null, project: null },
+      sessions: [],
     },
   ],
 };
 
 function iso(hoursFromNow) {
   return new Date(Date.now() + hoursFromNow * 3600 * 1000).toISOString();
+}
+
+/** One sample session row, `minsAgo` minutes since it last did anything. */
+function sess(project, branch, state, minsAgo, waitingOn = null) {
+  const ageMs = minsAgo * 60 * 1000;
+  return {
+    id: `${project}-session`,
+    project,
+    cwd: `/home/mark/code/${project}`,
+    branch,
+    state,
+    waitingOn,
+    lastActivity: new Date(Date.now() - ageMs).toISOString(),
+    ageMs,
+  };
 }
 
 async function shoot(win, name, width, height, expanded) {
@@ -84,6 +108,14 @@ async function shoot(win, name, width, height, expanded) {
   );
   // Let the resize settle and the open/close transition finish before capturing.
   await new Promise((r) => setTimeout(r, 900));
+  if (process.env.SHOT_DEBUG) {
+    const info = await win.webContents.executeJavaScript(
+      'JSON.stringify({state:document.body.dataset.state,edge:document.body.dataset.edge,' +
+        'panel:document.getElementById("panel").getBoundingClientRect(),' +
+        'rows:document.querySelectorAll(".row").length,sessions:document.querySelectorAll(".session").length})'
+    );
+    console.log(`[debug ${name}] ${info}`);
+  }
   const image = await win.webContents.capturePage();
   fs.writeFileSync(path.join(OUT, `${name}.png`), image.toPNG());
   console.log(`wrote ${path.join(OUT, `${name}.png`)}`);
@@ -113,6 +145,12 @@ app.whenReady().then(async () => {
     },
   });
 
+  // Surface renderer errors here rather than silently capturing a blank panel.
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
+  win.webContents.on('render-process-gone', (_e, details) => console.log('[renderer gone]', details));
+
   ipcMain.on('sup:ready', () => {
     win.webContents.send('sup:config', CONFIG);
     win.webContents.send('sup:update', SNAPSHOT);
@@ -125,7 +163,7 @@ app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 600));
 
   await shoot(win, 'collapsed', 90, 260, false);
-  await shoot(win, 'expanded', 450, 460, true);
+  await shoot(win, 'expanded', 430, 620, true);
 
   app.quit();
 });

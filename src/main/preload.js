@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('sup', {
   collapse: () => ipcRenderer.send('sup:collapse'),
   refresh: () => ipcRenderer.send('sup:refresh'),
   openSettings: () => ipcRenderer.send('sup:open-settings'),
+  quit: () => ipcRenderer.send('sup:quit'),
 });

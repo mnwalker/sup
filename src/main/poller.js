@@ -2,6 +2,7 @@
 
 const { EventEmitter } = require('events');
 const { providers } = require('./providers');
+const { agentProcesses } = require('./lib/processes');
 const settings = require('./settings');
 
 const MAX_BACKOFF_MS = 15 * 60 * 1000;
@@ -21,7 +22,9 @@ class Poller extends EventEmitter {
   start() {
     if (this.timer) return;
     this.tick();
-    this.timer = setInterval(() => this.tick(), 5000);
+    // Providers enforce their own intervals; this only decides how promptly a
+    // due provider is noticed, so it does not need to be fast.
+    this.timer = setInterval(() => this.tick(), 15000);
     if (this.timer.unref) this.timer.unref();
   }
 
@@ -48,9 +51,23 @@ class Poller extends EventEmitter {
     return Math.min(base * 2 ** Math.min(entry.failures, 5), MAX_BACKOFF_MS);
   }
 
-  tick() {
+  async tick() {
     const config = settings.load();
     const now = Date.now();
+
+    const due = providers.filter((p) => {
+      if (config.enabled[p.id] === false) return false;
+      const entry = this.entryFor(p.id);
+      return !entry.running && now >= entry.nextRunAt;
+    });
+
+    // Walking /proc is the expensive part, so do it once for everyone that is
+    // about to run, rather than once per provider.
+    const ctx = {
+      settings: config,
+      processes: due.length ? await agentProcesses() : [],
+      processesKnown: process.platform === 'linux',
+    };
 
     for (const provider of providers) {
       if (config.enabled[provider.id] === false) {
@@ -58,11 +75,11 @@ class Poller extends EventEmitter {
         continue;
       }
       const entry = this.entryFor(provider.id);
-      if (entry.running || now < entry.nextRunAt) continue;
+      if (!due.includes(provider)) continue;
 
       entry.running = true;
       Promise.resolve()
-        .then(() => provider.collect({ settings: config }))
+        .then(() => provider.collect(ctx))
         .then((results) => {
           entry.results = Array.isArray(results) ? results : [results];
           const bad = entry.results.some((r) => r.status === 'error');

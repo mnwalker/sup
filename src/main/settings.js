@@ -17,7 +17,7 @@ const DEFAULTS = {
   collapsedWidth: 190,
   collapsedHeight: 28,
   expandedWidth: 400,
-  expandedHeight: 420,
+  expandedHeight: 520,
 
   /** How often to refresh. Providers enforce their own sensible floor. */
   pollIntervalMs: 180000,
@@ -37,6 +37,8 @@ const DEFAULTS = {
   windowType: 'toolbar',
   /** Optional manual Cursor session cookie (`<userId>::<jwt>`). */
   cursorCookie: null,
+  /** Blink the tab's dot while a session is running. Costs one repaint/sec. */
+  blink: true,
   /** Warn at these utilisation percentages. */
   warnAt: 75,
   dangerAt: 90,

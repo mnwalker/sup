@@ -34,6 +34,7 @@ function providerResult({
   detail = null,
   windows = [],
   session = null,
+  sessions = [],
   plan = null,
 }) {
   return {
@@ -46,6 +47,7 @@ function providerResult({
     plan,
     windows: windows.filter(Boolean),
     session: session || { state: 'unknown', since: null, project: null },
+    sessions,
     updatedAt: new Date().toISOString(),
   };
 }

@@ -11,6 +11,13 @@
   --working: #61a8ff;
   --waiting: #ffc861;
   --idle: #6b7080;
+
+  /* Session states, most-urgent first. */
+  --st-input: #ffc861;
+  --st-agents: #c08cff;
+  --st-active: #61a8ff;
+  --st-stopped: #7f8796;
+  --st-inactive: #565c6b;
 }
 
 * {
@@ -189,34 +196,35 @@ body[data-edge='right'] .rings {
   border-radius: 50%;
   background: var(--idle);
 }
-.ring[data-session='working'] .pip {
-  background: var(--working);
-  animation: pulse 1.4s ease-in-out infinite;
+.ring[data-session='active'] .pip {
+  background: var(--st-active);
 }
-.ring[data-session='waiting'] .pip {
-  background: var(--waiting);
+
+/*
+ * A CSS animation here would repaint a transparent, always-on-top window at
+ * frame rate all day — measured at roughly three times the idle CPU of the
+ * whole app for one 5px dot. So the "something is running" cue is a discrete
+ * blink driven from JS instead, and only while a session is actually active.
+ */
+body[data-blink='off'] .ring[data-session='active'] .pip {
+  opacity: 0.3;
 }
+.ring[data-session='agents'] .pip {
+  background: var(--st-agents);
+}
+.ring[data-session='input'] .pip {
+  background: var(--st-input);
+}
+.ring[data-session='stopped'] .pip {
+  background: var(--st-stopped);
+}
+.ring[data-session='inactive'] .pip,
 .ring[data-session='idle'] .pip {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--idle);
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.75);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .ring[data-session='working'] .pip {
-    animation: none;
-  }
   .ring .value {
     transition: none;
   }
@@ -245,9 +253,10 @@ body[data-state='expanded'] .panel {
 }
 /* While closed the panel must not take any room in the row/column, or it would
    push the tab away from the screen edge inside the collapsed window. */
+/* Hidden means gone: an invisible panel full of animated dots still costs
+   compositing every frame, and the tab is on screen all day. */
 body[data-state='collapsed'] .panel {
-  position: absolute;
-  margin: 0;
+  display: none;
 }
 body[data-edge='bottom'] .panel {
   margin: 0 0 8px;
@@ -368,11 +377,14 @@ body[data-edge='right'] .panel {
   color: var(--muted);
   white-space: nowrap;
 }
-.chip[data-session='working'] {
-  color: var(--working);
+.chip[data-session='active'] {
+  color: var(--st-active);
 }
-.chip[data-session='waiting'] {
-  color: var(--waiting);
+.chip[data-session='agents'] {
+  color: var(--st-agents);
+}
+.chip[data-session='input'] {
+  color: var(--st-input);
 }
 
 .panel-body {
@@ -385,6 +397,82 @@ body[data-edge='bottom'] .panel-body {
   max-height: calc(100vh - 90px);
 }
 
+/* ---------- per-session list ---------- */
+
+.sessions {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.07);
+  display: grid;
+  gap: 3px;
+}
+
+.session {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: baseline;
+  font-size: 10.5px;
+}
+
+.session .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  align-self: center;
+  background: var(--st-inactive);
+}
+.session[data-state='input'] .dot {
+  background: var(--st-input);
+}
+.session[data-state='agents'] .dot {
+  background: var(--st-agents);
+}
+.session[data-state='active'] .dot {
+  background: var(--st-active);
+}
+.session[data-state='stopped'] .dot {
+  background: var(--st-stopped);
+}
+
+.session .who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(233, 234, 240, 0.86);
+}
+.session .who em {
+  font-style: normal;
+  color: var(--muted);
+}
+.session .what {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.session[data-state='input'] .what {
+  color: var(--st-input);
+}
+.session[data-state='agents'] .what {
+  color: var(--st-agents);
+}
+.session[data-state='inactive'] .who,
+.session[data-state='inactive'] .what {
+  opacity: 0.6;
+}
+
+.session-more {
+  color: var(--muted);
+  font-size: 10px;
+  padding-left: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session .dot {
+    animation: none !important;
+  }
+}
+
 .panel-foot {
   display: flex;
   justify-content: space-between;
@@ -392,6 +480,10 @@ body[data-edge='bottom'] .panel-body {
   margin-top: 8px;
   color: var(--muted);
   font-size: 10px;
+}
+.foot-actions {
+  display: flex;
+  gap: 6px;
 }
 .panel-foot button {
   background: rgba(255, 255, 255, 0.07);

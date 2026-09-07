@@ -9,6 +9,7 @@ const els = {
   panelBody: document.getElementById('panelBody'),
   updatedAt: document.getElementById('updatedAt'),
   refresh: document.getElementById('refresh'),
+  quit: document.getElementById('quit'),
 };
 
 let config = { warnAt: 75, dangerAt: 90, edge: 'right', collapsedWidth: 190 };
@@ -44,17 +45,41 @@ function formatReset(iso) {
   return `resets in ${days}d ${hours % 24}h`;
 }
 
+const STATE_LABELS = {
+  active: 'active',
+  agents: 'waiting on agents',
+  input: 'waiting for you',
+  stopped: 'recently stopped',
+  inactive: 'inactive',
+};
+
 function sessionLabel(session) {
-  switch (session && session.state) {
-    case 'working':
-      return 'working';
-    case 'waiting':
-      return 'waiting on you';
-    case 'idle':
-      return 'idle';
-    default:
-      return null;
-  }
+  return (session && STATE_LABELS[session.state]) || null;
+}
+
+/**
+ * A short headline for the provider's meta line — the full breakdown is in the
+ * list right below it, so this only names the state that wants attention.
+ */
+function summariseCounts(counts) {
+  if (!counts) return null;
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (!total) return null;
+
+  const headline = ['input', 'agents', 'active'].find((state) => counts[state]);
+  const size = total === 1 ? '1 session' : `${total} sessions`;
+  return headline ? `${size} \u00b7 ${counts[headline]} ${STATE_LABELS[headline]}` : size;
+}
+
+function formatAge(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const secs = Math.round(ms / 1000);
+  if (secs < 45) return 'now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ${mins % 60}m`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function statusLine(provider) {
@@ -157,10 +182,11 @@ function renderPanel() {
     const meta = el('div', 'row-meta');
     const sub = statusLine(provider);
     if (sub) meta.append(el('span', 'row-sub', sub));
+    const counts = summariseCounts(provider.session && provider.session.counts);
     const session = sessionLabel(provider.session);
-    if (session) {
-      const chip = el('span', 'chip', provider.session.project ? `${session} \u00b7 ${provider.session.project}` : session);
-      chip.dataset.session = provider.session.state;
+    if (counts || session) {
+      const chip = el('span', 'chip', counts || session);
+      chip.dataset.session = (provider.session && provider.session.state) || 'unknown';
       meta.append(chip);
     }
     if (meta.childElementCount) main.append(meta);
@@ -190,13 +216,46 @@ function renderPanel() {
       main.append(bars);
     }
 
+    if (provider.sessions && provider.sessions.length) {
+      main.append(sessionList(provider.sessions));
+    }
+
     row.append(main);
 
     els.panelBody.append(row);
   }
 }
 
+const MAX_SESSION_ROWS = 6;
+
+function sessionList(sessions) {
+  const wrap = el('div', 'sessions');
+
+  for (const s of sessions.slice(0, MAX_SESSION_ROWS)) {
+    const row = el('div', 'session');
+    row.dataset.state = s.state;
+    row.title = [s.cwd, s.branch && `branch ${s.branch}`, s.id].filter(Boolean).join('\n');
+
+    const who = el('div', 'who');
+    who.append(document.createTextNode(s.project || s.id.slice(0, 8)));
+    if (s.branch) who.append(el('em', null, ` \u00b7 ${s.branch}`));
+
+    const label = STATE_LABELS[s.state] || s.state;
+    const detail = s.state === 'agents' && s.waitingOn ? `${label} (${s.waitingOn})` : label;
+
+    const age = Date.now() - new Date(s.lastActivity).getTime();
+    row.append(el('span', 'dot'), who, el('div', 'what', `${detail} \u00b7 ${formatAge(age)}`));
+    wrap.append(row);
+  }
+
+  if (sessions.length > MAX_SESSION_ROWS) {
+    wrap.append(el('div', 'session-more', `+${sessions.length - MAX_SESSION_ROWS} more`));
+  }
+  return wrap;
+}
+
 function render() {
+  syncBlink();
   renderRings();
   renderPanel();
   els.updatedAt.textContent = snapshot.generatedAt
@@ -236,6 +295,7 @@ document.addEventListener('mouseout', (event) => {
 });
 
 els.refresh.addEventListener('click', () => window.sup.refresh());
+els.quit.addEventListener('click', () => window.sup.quit());
 
 window.sup.onUpdate((payload) => {
   snapshot = payload;
@@ -246,3 +306,25 @@ window.sup.ready();
 
 // Reset countdowns stay honest without waiting for the next poll.
 setInterval(render, 30000);
+
+/*
+ * The activity blink. Runs only while something is actually active, and at a
+ * pace a human reads rather than one the compositor pays for: two repaints of
+ * one dot per cycle, versus sixty a second for the CSS animation it replaces.
+ */
+let blinkTimer = null;
+
+function syncBlink() {
+  const wanted =
+    config.blink !== false && snapshot.providers.some((p) => p.session && p.session.state === 'active');
+
+  if (wanted && !blinkTimer) {
+    blinkTimer = setInterval(() => {
+      els.body.dataset.blink = els.body.dataset.blink === 'off' ? 'on' : 'off';
+    }, 1200);
+  } else if (!wanted && blinkTimer) {
+    clearInterval(blinkTimer);
+    blinkTimer = null;
+    delete els.body.dataset.blink;
+  }
+}

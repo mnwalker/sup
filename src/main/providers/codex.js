@@ -6,7 +6,7 @@ const path = require('path');
 const { codexHome, readJson, exists } = require('../lib/paths');
 const { getJson } = require('../lib/http');
 const { usageWindow, providerResult } = require('../lib/shape');
-const { detectSession } = require('../lib/sessions');
+const { listSessions, summarise } = require('../lib/sessions');
 const { tailJsonl, findJsonlFiles } = require('../lib/jsonl');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
@@ -112,31 +112,46 @@ function windowsFromLiveUsage(payload) {
   return windows;
 }
 
-function classifyCodexRecords(records) {
-  for (let i = records.length - 1; i >= 0; i -= 1) {
-    const payload = records[i].payload || records[i];
-    const type = payload.type || records[i].type;
+/** Payload types that mean the model is mid-turn rather than done. */
+const CODEX_WORKING = new Set([
+  'user_message',
+  'agent_reasoning',
+  'exec_command_begin',
+  'exec_command_end',
+  'patch_apply_begin',
+  'task_started',
+]);
+const CODEX_DONE = new Set(['agent_message', 'task_complete', 'turn_complete']);
+
+/**
+ * Codex rollouts carry the working directory in their opening meta record,
+ * which is the only reliable project name: the files themselves live under
+ * sessions/YYYY/MM/DD, so the path says nothing about the project.
+ */
+function parseCodexSession(records) {
+  let cwd = null;
+  let lastStop = null;
+  let pending = null;
+
+  for (const rec of records) {
+    const payload = rec.payload || rec;
+    if (rec.cwd) cwd = rec.cwd;
+    if (payload && payload.cwd) cwd = payload.cwd;
+
+    const type = payload && payload.type;
     if (!type) continue;
-    if (type === 'token_count' || type === 'event_msg') continue;
-    if (type === 'agent_message' || type === 'task_complete' || type === 'turn_complete') return 'waiting';
-    if (
-      type === 'user_message' ||
-      type === 'agent_reasoning' ||
-      type === 'exec_command_begin' ||
-      type === 'exec_command_end' ||
-      type === 'patch_apply_begin' ||
-      type === 'task_started'
-    ) {
-      return 'working';
-    }
-    if (type === 'message' && payload.role) {
-      return payload.role === 'assistant' ? 'waiting' : 'working';
-    }
+
+    if (type === 'exec_command_begin') pending = { id: payload.call_id, name: 'shell command' };
+    if (type === 'exec_command_end' && pending && pending.id === payload.call_id) pending = null;
+
+    if (CODEX_DONE.has(type)) lastStop = 'end_turn';
+    else if (CODEX_WORKING.has(type)) lastStop = 'tool_use';
   }
-  return 'unknown';
+
+  return { cwd, lastStop, pending };
 }
 
-async function collect() {
+async function collect(ctx = {}) {
   const home = codexHome();
   const id = 'codex';
   const label = 'Codex';
@@ -145,7 +160,13 @@ async function collect() {
     return [providerResult({ id, label, status: 'not-installed', detail: `No ${home} directory found.` })];
   }
 
-  const session = await detectSession(path.join(home, 'sessions'), classifyCodexRecords);
+  const sessions = await listSessions(path.join(home, 'sessions'), {
+    parse: parseCodexSession,
+    kind: 'codex',
+    processes: ctx.processes || [],
+    processesKnown: Boolean(ctx.processesKnown),
+  });
+  const session = summarise(sessions);
   const auth = readAuth(home);
 
   // Prefer the live account endpoint; rollout logs only tell us what the limits
@@ -161,7 +182,7 @@ async function collect() {
       });
       const windows = windowsFromLiveUsage(payload);
       if (windows.length) {
-        return [providerResult({ id, label, status: 'ok', windows, session })];
+        return [providerResult({ id, label, status: 'ok', windows, session, sessions })];
       }
     } catch {
       /* fall through to the local logs */
@@ -178,6 +199,7 @@ async function collect() {
         detail: `From session logs, last seen ${new Date(fromLogs.observedAt).toISOString()}`,
         windows: fromLogs.windows,
         session,
+        sessions,
       }),
     ];
   }
@@ -191,6 +213,7 @@ async function collect() {
         ? 'Signed in, but no rate-limit data yet — run a Codex turn and it will appear.'
         : `No credentials in ${path.join(home, 'auth.json')} — run \`codex login\`.`,
       session,
+      sessions,
     }),
   ];
 }
@@ -200,5 +223,5 @@ module.exports = {
   label: 'Codex',
   minIntervalMs: MIN_INTERVAL_MS,
   collect,
-  _internal: { findRateLimits, windowsFromRateLimits, classifyCodexRecords, describeWindow },
+  _internal: { findRateLimits, windowsFromRateLimits, parseCodexSession, describeWindow },
 };

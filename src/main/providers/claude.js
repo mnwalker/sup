@@ -6,7 +6,7 @@ const { execFile } = require('child_process');
 const { claudeConfigDirs, readJson } = require('../lib/paths');
 const { getJson } = require('../lib/http');
 const { usageWindow, providerResult } = require('../lib/shape');
-const { detectSession } = require('../lib/sessions');
+const { listSessions, summarise, pendingToolCall } = require('../lib/sessions');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA = 'oauth-2025-04-20';
@@ -85,31 +85,65 @@ function windowsFromUsage(payload) {
   return windows;
 }
 
-/** Last transcript record tells us whether Claude is mid-turn or waiting on us. */
-function classifyClaudeRecords(records) {
-  for (let i = records.length - 1; i >= 0; i -= 1) {
-    const rec = records[i];
-    const type = rec.type || (rec.message && rec.message.role);
-    if (type === 'user' || (rec.message && rec.message.role === 'user')) {
-      // A user turn was just appended (or a tool result came back): Claude is up.
-      return 'working';
-    }
-    if (type === 'assistant' || (rec.message && rec.message.role === 'assistant')) {
-      const content = (rec.message && rec.message.content) || [];
-      const blocks = Array.isArray(content) ? content : [];
-      const hasToolUse = blocks.some((b) => b && b.type === 'tool_use');
-      return hasToolUse ? 'working' : 'waiting';
+/**
+ * Pull the state of one Claude Code transcript out of its records.
+ *
+ * Records carry `cwd` and `gitBranch` directly, which beats decoding them from
+ * the encoded directory name, and assistant messages carry a `stop_reason` that
+ * says plainly whether the turn ended or a tool is running.
+ */
+function parseClaudeSession(records) {
+  let cwd = null;
+  let branch = null;
+  let lastStop = null;
+
+  for (const rec of records) {
+    if (rec.cwd) cwd = rec.cwd;
+    if (rec.gitBranch) branch = rec.gitBranch;
+    const msg = rec.message;
+    if (msg && typeof msg === 'object' && msg.role === 'assistant' && msg.stop_reason) {
+      lastStop = msg.stop_reason;
     }
   }
-  return 'unknown';
+
+  const blocks = (rec) => {
+    const content = rec.message && rec.message.content;
+    return Array.isArray(content) ? content : [];
+  };
+
+  const pending = pendingToolCall(records, {
+    // A user record holding only tool_result blocks is the tail of the current
+    // turn, not the start of a new one.
+    isUserPrompt: (rec) =>
+      rec.type === 'user' &&
+      rec.message &&
+      rec.message.role === 'user' &&
+      !blocks(rec).some((b) => b && b.type === 'tool_result'),
+    toolUsesOf: (rec) =>
+      blocks(rec)
+        .filter((b) => b && b.type === 'tool_use')
+        .map((b) => ({ id: b.id, name: b.name, input: b.input })),
+    toolResultsOf: (rec) =>
+      blocks(rec)
+        .filter((b) => b && b.type === 'tool_result' && b.tool_use_id)
+        .map((b) => b.tool_use_id),
+  });
+
+  return { cwd, branch, lastStop, pending };
 }
 
-async function collectOne({ dir, label }) {
+async function collectOne({ dir, label }, ctx) {
   const account = label === 'default' ? null : label;
   const id = 'claude';
   const displayLabel = 'Claude Code';
 
-  const session = await detectSession(path.join(dir, 'projects'), classifyClaudeRecords);
+  const sessions = await listSessions(path.join(dir, 'projects'), {
+    parse: parseClaudeSession,
+    kind: 'claude',
+    processes: ctx.processes || [],
+    processesKnown: Boolean(ctx.processesKnown),
+  });
+  const session = summarise(sessions);
   const creds = readCredentials(dir);
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   const token = (creds && creds.accessToken) || envToken;
@@ -122,6 +156,7 @@ async function collectOne({ dir, label }) {
       status: 'unauthenticated',
       detail: `No OAuth token in ${path.join(dir, '.credentials.json')} — run \`claude\` and sign in.`,
       session,
+      sessions,
     });
   }
 
@@ -136,6 +171,7 @@ async function collectOne({ dir, label }) {
       detail: 'Stored token has expired — start Claude Code once to refresh it.',
       plan: creds.subscriptionType,
       session,
+      sessions,
     });
   }
 
@@ -157,6 +193,7 @@ async function collectOne({ dir, label }) {
       plan: creds && creds.subscriptionType,
       windows: windowsFromUsage(payload),
       session,
+      sessions,
     });
   } catch (err) {
     const detail =
@@ -165,11 +202,11 @@ async function collectOne({ dir, label }) {
         : err.status === 429
           ? 'Rate limited by the usage endpoint; backing off.'
           : err.message;
-    return providerResult({ id, label: displayLabel, account, status: 'error', detail, session });
+    return providerResult({ id, label: displayLabel, account, status: 'error', detail, session, sessions });
   }
 }
 
-async function collect() {
+async function collect(ctx = {}) {
   const dirs = claudeConfigDirs();
   if (!dirs.length) {
     return [
@@ -181,7 +218,7 @@ async function collect() {
       }),
     ];
   }
-  return Promise.all(dirs.map(collectOne));
+  return Promise.all(dirs.map((d) => collectOne(d, ctx)));
 }
 
 module.exports = {
@@ -190,5 +227,5 @@ module.exports = {
   minIntervalMs: MIN_INTERVAL_MS,
   collect,
   // exported for tests
-  _internal: { windowsFromUsage, classifyClaudeRecords, readCredentials },
+  _internal: { windowsFromUsage, parseClaudeSession, readCredentials },
 };

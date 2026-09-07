@@ -228,6 +228,10 @@ function wireIpc() {
 
   ipcMain.on('sup:refresh', () => poller.refreshNow());
   ipcMain.on('sup:open-settings', () => shell.openPath(settings.FILE));
+
+  // The tray is not guaranteed to exist (plenty of desktops need an extension
+  // for it), so the panel carries its own way out.
+  ipcMain.on('sup:quit', () => app.quit());
 }
 
 function main() {
@@ -249,9 +253,11 @@ function main() {
           const worst = p.windows.reduce((a, w) => (w.percent > (a ? a.percent : -1) ? w : a), null);
           console.log(
             `[sup] ${p.key.padEnd(14)} ${p.status.padEnd(16)} ` +
-              `${worst ? `${Math.round(worst.percent)}% ${worst.label}` : p.detail || ''} ` +
-              `(session: ${p.session.state})`
+              `${worst ? `${Math.round(worst.percent)}% ${worst.label}` : p.detail || ''}`
           );
+          for (const s of p.sessions || []) {
+            console.log(`        ${s.state.padEnd(9)} ${(s.project || s.id).padEnd(18)} ${s.branch || ''}`);
+          }
         }
       }
     });

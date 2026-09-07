@@ -67,11 +67,28 @@ asks you to start Claude Code, rather than racing it for the file.
 
 ### Session state
 
-The "working / waiting on you" pip is a heuristic. The CLIs do not publish a
-status file, so `sup` looks at the transcript each one already writes
-(`~/.claude/projects/**/*.jsonl`, `~/.codex/sessions/**/*.jsonl`) and reads the
-last record: a trailing tool call means it is still going, a finished assistant
-message means it is your turn, and nothing for twenty minutes means idle.
+Every open session gets its own row, not one row per tool. None of the CLIs
+publish a status file, so each row's state is inferred from two things: the
+transcript that CLI is already writing, and whether one of its processes is
+still sitting in that project directory. The second half is what separates
+"finished, your turn" from "that session is over".
+
+| State | What it means | How it is decided |
+| --- | --- | --- |
+| **active** | generating or running a tool right now | the transcript was written to in the last 90s, or a tool call is still unanswered |
+| **waiting on agents** | blocked on subagents it dispatched | an unanswered `Task` call, or a backgrounded `Bash` |
+| **waiting for you** | your turn | the last assistant turn ended (`stop_reason: end_turn`), or it called `AskUserQuestion` / `ExitPlanMode` |
+| **recently stopped** | the session ended in the last 30 minutes | no CLI process left in that directory |
+| **inactive** | old, nothing happening | idle beyond the thresholds above |
+
+Rows are sorted by how much they want your attention, and each shows the
+project and git branch — both read from the transcript itself, so Codex
+sessions are named after their working directory rather than the dated folder
+they happen to live in.
+
+Process matching is Linux-only for now (it reads `/proc`). Elsewhere the state
+falls back to the transcript alone, which cannot tell "recently stopped" from
+"waiting for you".
 
 ## Configuration
 
@@ -87,9 +104,10 @@ login).
   "collapsedWidth": 190,    // the tab's length along its edge
   "collapsedHeight": 28,    // and its depth into the screen
   "expandedWidth": 400,
-  "expandedHeight": 420,
+  "expandedHeight": 520,
   "pollIntervalMs": 180000, // providers enforce their own floor as well
   "enabled": { "claude": true, "codex": true, "cursor": true, "antigravity": true },
+  "blink": true,            // blink the tab's dot while a session is running
   "transparent": true,      // set false if you have no compositor
   "windowType": "toolbar",  // X11 window type hint
   "cursorCookie": null,     // "<userId>::<jwt>" if you only sign in on the web
@@ -97,6 +115,19 @@ login).
   "dangerAt": 90
 }
 ```
+
+### Quitting, and CPU
+
+**Quit** sits next to Refresh at the bottom of the panel — hover the tab, then
+click it. The tray menu has the same option, but plenty of desktops (GNOME
+without an AppIndicator extension, for one) never show a tray at all, so the
+panel does not depend on it. Failing both, `pkill supbar`.
+
+Idle cost is about 2% of one core. The dot on the tab blinks while a session is
+active, which is a discrete repaint roughly once a second rather than a CSS
+animation: on an always-on-top transparent window, animating one 5px dot at
+frame rate measured over three times the entire app's idle CPU. Set
+`"blink": false` to stop even that.
 
 ### Wayland
 
