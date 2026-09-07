@@ -77,9 +77,15 @@ still sitting in that project directory. The second half is what separates
 | --- | --- | --- |
 | **active** | generating or running a tool right now | the transcript was written to in the last 90s, or a tool call is still unanswered |
 | **waiting on agents** | blocked on subagents it dispatched | an unanswered `Task` call, or a backgrounded `Bash` |
-| **waiting for you** | your turn | the last assistant turn ended (`stop_reason: end_turn`), or it called `AskUserQuestion` / `ExitPlanMode` |
-| **recently stopped** | the session ended in the last 30 minutes | no CLI process left in that directory |
+| **waiting for you** | it asked you something outright | an unanswered `AskUserQuestion` or `ExitPlanMode` |
+| **recently stopped** | finished, or the session ended, in the last 30 minutes | the turn is over, or no CLI process is left in that directory |
 | **inactive** | old, nothing happening | idle beyond the thresholds above |
+
+"Waiting for you" deliberately means the session *asked* something. A turn
+simply ending is not a question — every finished turn ends the same way, so
+counting that would mark every idle session as needing attention. Claude Code's
+permission prompts are not written to the transcript at all, so those cannot be
+detected from here; such a session reads as active until its tool call resolves.
 
 Rows are sorted by how much they want your attention, and each shows the
 project and git branch — both read from the transcript itself, so Codex

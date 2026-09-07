@@ -46,17 +46,21 @@ function classifyTool(name, input) {
  * `alive` is deliberately optimistic when we cannot enumerate processes (we
  * only can on Linux): better to fall back to the transcript than to report
  * every session as stopped.
+ *
+ * "Waiting for you" means the session actually asked something. It is NOT the
+ * same as the turn having ended — every finished turn ends the same way, so
+ * treating that as a question labels every idle session as needing attention,
+ * which is worse than useless. A finished turn is just a stopped session.
  */
-function deriveState({ ageMs, pending, lastStop, alive, thresholds = DEFAULT_THRESHOLDS }) {
-  const { activeMs, recentMs, staleMs } = thresholds;
+function deriveState({ ageMs, pending, alive, thresholds = DEFAULT_THRESHOLDS }) {
+  const { activeMs, recentMs } = thresholds;
 
   if (!alive) return ageMs <= recentMs ? 'stopped' : 'inactive';
   if (pending && pending.background) return 'agents';
   if (pending && pending.prompt) return 'input';
   if (ageMs <= activeMs) return 'active';
   if (pending) return 'active'; // mid-turn on something slow
-  if (lastStop === 'end_turn') return ageMs <= staleMs ? 'input' : 'inactive';
-  return ageMs <= recentMs ? 'input' : 'inactive';
+  return ageMs <= recentMs ? 'stopped' : 'inactive';
 }
 
 /**
@@ -108,7 +112,7 @@ async function listSessions(rootDir, opts = {}) {
     const ageMs = now - mtimeMs;
     const alive = processesKnown ? hasProcessIn(processes, kind, info.cwd) : ageMs <= thresholds.staleMs;
 
-    const state = deriveState({ ageMs, pending: info.pending, lastStop: info.lastStop, alive, thresholds });
+    const state = deriveState({ ageMs, pending: info.pending, alive, thresholds });
 
     sessions.push({
       id: path.basename(file, '.jsonl'),

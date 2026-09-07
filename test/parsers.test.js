@@ -184,7 +184,22 @@ test('session state: a live session is placed by what it is waiting on', () => {
   assert.equal(deriveState({ ...live, pending: { name: 'Task', background: true } }), 'agents');
   assert.equal(deriveState({ ...live, pending: { name: 'AskUserQuestion', prompt: true } }), 'input');
   assert.equal(deriveState({ ...live, pending: { name: 'Bash' } }), 'active');
-  assert.equal(deriveState({ ...live, pending: null, lastStop: 'end_turn' }), 'input');
+});
+
+test('session state: a finished turn is stopped, never "waiting for you"', () => {
+  // Every completed turn ends the same way, so treating that as a question
+  // would label every idle session as needing attention.
+  const finished = { alive: true, pending: null, lastStop: 'end_turn' };
+  assert.equal(deriveState({ ...finished, ageMs: 10 * 60 * 1000 }), 'stopped');
+  assert.equal(deriveState({ ...finished, ageMs: 3 * 60 * 60 * 1000 }), 'inactive');
+});
+
+test('session state: only an explicit ask counts as waiting for you', () => {
+  const live = { alive: true, ageMs: 10 * 60 * 1000 };
+  for (const name of ['Bash', 'Edit', 'Read', 'WebFetch']) {
+    assert.notEqual(deriveState({ ...live, pending: { name } }), 'input', `${name} must not read as a question`);
+  }
+  assert.equal(deriveState({ ...live, pending: { name: 'ExitPlanMode', prompt: true } }), 'input');
 });
 
 test('session state: a fresh write beats everything else', () => {
@@ -192,7 +207,7 @@ test('session state: a fresh write beats everything else', () => {
 });
 
 test('session state: a long-idle live session stops claiming to wait', () => {
-  const old = { ageMs: 6 * 60 * 60 * 1000, pending: null, lastStop: 'end_turn', alive: true };
+  const old = { ageMs: 6 * 60 * 60 * 1000, pending: null, alive: true };
   assert.equal(deriveState(old), 'inactive');
 });
 
@@ -253,11 +268,19 @@ test('placement: an offset past the edge is clamped back on screen', () => {
   assert.equal(bounds.x, 1920 - 190);
 });
 
-test('processes: recognises the agent CLIs without matching our own app', () => {
+test('processes: recognises the agent CLIs however they were installed', () => {
   assert.equal(kindOf({ argv: ['/usr/local/bin/claude', '--resume'] }), 'claude');
-  assert.equal(kindOf({ argv: ['node', '/opt/tools/codex'] }), 'codex');
+  // The npm install has nothing called "claude" on the command line at all.
+  assert.equal(kindOf({ argv: ['node', '/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'] }), 'claude');
+  assert.equal(kindOf({ argv: ['/home/m/.claude/local/node_modules/.bin/claude'] }), 'claude');
+  assert.equal(kindOf({ argv: ['/usr/bin/codex', 'exec'] }), 'codex');
+  assert.equal(kindOf({ argv: ['node', '/usr/lib/node_modules/@openai/codex/bin/codex.js'] }), 'codex');
+});
+
+test('processes: does not match our own app or lookalikes', () => {
   assert.equal(kindOf({ argv: ['/opt/Sup/supbar'] }), null);
   assert.equal(kindOf({ argv: ['/usr/bin/claude-helper'] }), null);
+  assert.equal(kindOf({ argv: ['vim', 'claude-notes.md'] }), null);
 });
 
 test('shape: the fullest window is the one the tab shows', () => {

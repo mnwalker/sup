@@ -12,18 +12,30 @@ const { listProcesses } = require('./proc');
  * cannot be waiting on anything.
  */
 
+/**
+ * Matching only argv[0] misses the common case: installed from npm, these CLIs
+ * run as `node .../@anthropic-ai/claude-code/cli.js`, where nothing is called
+ * "claude" at all. So check the whole command line for either the executable
+ * name or the package path.
+ */
 const KINDS = [
-  { kind: 'claude', test: (argv0) => /(^|\/)claude$/.test(argv0) },
-  { kind: 'codex', test: (argv0) => /(^|\/)codex$/.test(argv0) },
+  {
+    kind: 'claude',
+    exe: /(^|\/)claude$/,
+    path: /(@anthropic-ai\/claude-code|claude-code\/cli\.js|\/\.claude\/local\/)/,
+  },
+  {
+    kind: 'codex',
+    exe: /(^|\/)codex(-cli)?$/,
+    path: /(@openai\/codex|codex-cli\/|\/\.codex\/bin\/)/,
+  },
 ];
 
 function kindOf(proc) {
-  const argv0 = proc.argv[0] || '';
-  // node-launched CLIs show up as `node /path/to/claude`, so look at the script
-  // argument too rather than only the interpreter.
-  const candidates = [argv0, proc.argv[1] || ''];
-  for (const { kind, test } of KINDS) {
-    if (candidates.some((c) => c && test(c.split(' ')[0]))) return kind;
+  const argv = proc.argv || [];
+  for (const { kind, exe, path: pathRe } of KINDS) {
+    if (argv.some((arg) => arg && exe.test(arg.split(' ')[0]))) return kind;
+    if (argv.some((arg) => arg && pathRe.test(arg))) return kind;
   }
   return null;
 }
