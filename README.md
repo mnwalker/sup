@@ -21,7 +21,7 @@ tools do.
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./supbar_0.1.2_amd64.deb
+sudo apt install ./supbar_0.1.3_amd64.deb
 supbar
 ```
 
@@ -35,8 +35,8 @@ project's own name, `sup`.
 ### AppImage
 
 ```bash
-chmod +x supbar-0.1.2-x86_64.AppImage
-./supbar-0.1.2-x86_64.AppImage
+chmod +x supbar-0.1.3-x86_64.AppImage
+./supbar-0.1.3-x86_64.AppImage
 ```
 
 ### Windows
