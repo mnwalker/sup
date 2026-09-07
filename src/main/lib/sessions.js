@@ -122,6 +122,7 @@ async function listSessions(rootDir, opts = {}) {
       state,
       stateLabel: STATES[state].label,
       waitingOn: info.pending ? info.pending.name : null,
+      agents: info.agents || 0,
       lastActivity: new Date(mtimeMs).toISOString(),
       ageMs,
     });
@@ -135,6 +136,46 @@ async function listSessions(rootDir, opts = {}) {
 
   sessions.sort((a, b) => STATES[a.state].rank - STATES[b.state].rank || a.ageMs - b.ageMs);
   return sessions.slice(0, limit);
+}
+
+/**
+ * One row per project, not per transcript.
+ *
+ * Every `claude` run in a directory writes its own session file, so a project
+ * worked on all day accumulates transcripts and would otherwise fill the list
+ * with identical-looking rows. Collapse them onto the project, keeping the
+ * state that most wants attention and the most recent activity.
+ */
+function groupByProject(sessions, { limit = 8 } = {}) {
+  const groups = new Map();
+
+  for (const session of sessions) {
+    const key = session.cwd || session.id;
+    const group = groups.get(key);
+
+    if (!group) {
+      groups.set(key, { ...session, sessionCount: 1, agents: session.agents || 0 });
+      continue;
+    }
+
+    group.sessionCount += 1;
+    group.agents += session.agents || 0;
+
+    if (STATES[session.state].rank < STATES[group.state].rank) {
+      group.state = session.state;
+      group.stateLabel = STATES[session.state].label;
+      group.waitingOn = session.waitingOn;
+    }
+    if (session.ageMs < group.ageMs) {
+      group.ageMs = session.ageMs;
+      group.lastActivity = session.lastActivity;
+      group.branch = session.branch || group.branch;
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => STATES[a.state].rank - STATES[b.state].rank || a.ageMs - b.ageMs)
+    .slice(0, limit);
 }
 
 /** The one session the collapsed tab should speak for. */
@@ -158,7 +199,7 @@ function summarise(sessions) {
  * current turn is considered, because our tail window may start after an older
  * call's result and we would wrongly call it pending.
  */
-function pendingToolCall(records, { isUserPrompt, toolUsesOf, toolResultsOf }) {
+function pendingToolCalls(records, { isUserPrompt, toolUsesOf, toolResultsOf }) {
   const resolved = new Set();
   const candidates = [];
 
@@ -169,17 +210,23 @@ function pendingToolCall(records, { isUserPrompt, toolUsesOf, toolResultsOf }) {
     if (isUserPrompt(rec)) break; // start of the current turn
   }
 
-  for (const use of candidates) {
-    if (!resolved.has(use.id)) return { ...use, ...classifyTool(use.name, use.input) };
-  }
-  return null;
+  return candidates
+    .filter((use) => !resolved.has(use.id))
+    .map((use) => ({ ...use, ...classifyTool(use.name, use.input) }));
+}
+
+/** The one call a session is blocked on, most recent first. */
+function pendingToolCall(records, hooks) {
+  return pendingToolCalls(records, hooks)[0] || null;
 }
 
 module.exports = {
   listSessions,
+  groupByProject,
   summarise,
   deriveState,
   pendingToolCall,
+  pendingToolCalls,
   classifyTool,
   STATES,
   DEFAULT_THRESHOLDS,

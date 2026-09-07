@@ -9,7 +9,7 @@ const cursor = require('../src/main/providers/cursor')._internal;
 const antigravity = require('../src/main/providers/antigravity')._internal;
 const placement = require('../src/main/placement');
 const { worstWindow } = require('../src/main/lib/shape');
-const { deriveState, classifyTool } = require('../src/main/lib/sessions');
+const { deriveState, groupByProject } = require('../src/main/lib/sessions');
 const { kindOf } = require('../src/main/lib/processes');
 
 test('claude: maps the oauth usage payload to windows', () => {
@@ -209,6 +209,57 @@ test('session state: a fresh write beats everything else', () => {
 test('session state: a long-idle live session stops claiming to wait', () => {
   const old = { ageMs: 6 * 60 * 60 * 1000, pending: null, alive: true };
   assert.equal(deriveState(old), 'inactive');
+});
+
+const sess = (cwd, state, ageMs, extra = {}) => ({
+  id: `${cwd}-${ageMs}`,
+  cwd,
+  project: cwd.split('/').pop(),
+  branch: 'main',
+  state,
+  ageMs,
+  lastActivity: new Date(Date.now() - ageMs).toISOString(),
+  agents: 0,
+  ...extra,
+});
+
+test('grouping: many transcripts for one project become one row', () => {
+  // Every `claude` run in a directory writes its own transcript, so a project
+  // worked on all day would otherwise fill the list with identical rows.
+  const rows = groupByProject([
+    sess('/code/rentals', 'inactive', 9e6),
+    sess('/code/rentals', 'active', 1000),
+    sess('/code/rentals', 'stopped', 5e5),
+    sess('/code/shop', 'stopped', 6e5),
+  ]);
+
+  assert.equal(rows.length, 2);
+  const rentals = rows.find((r) => r.project === 'rentals');
+  assert.equal(rentals.sessionCount, 3);
+  // The state that most wants attention wins, and the freshest time is kept.
+  assert.equal(rentals.state, 'active');
+  assert.equal(rentals.ageMs, 1000);
+});
+
+test('grouping: outstanding agents are summed across a project', () => {
+  const [row] = groupByProject([
+    sess('/code/rentals', 'agents', 2000, { agents: 2, waitingOn: 'Task' }),
+    sess('/code/rentals', 'active', 3000, { agents: 1 }),
+  ]);
+  assert.equal(row.agents, 3);
+  assert.equal(row.state, 'agents');
+});
+
+test('grouping: the most urgent project sorts first', () => {
+  const rows = groupByProject([
+    sess('/code/a', 'inactive', 9e6),
+    sess('/code/b', 'active', 1000),
+    sess('/code/c', 'input', 5e5),
+  ]);
+  assert.deepEqual(
+    rows.map((r) => r.project),
+    ['c', 'b', 'a']
+  );
 });
 
 test('placement: the tab centres on the chosen edge', () => {

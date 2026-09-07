@@ -92,6 +92,15 @@ counting that would mark every idle session as needing attention. Claude Code's
 permission prompts are not written to the transcript at all, so those cannot be
 detected from here; such a session reads as active until its tool call resolves.
 
+One row per project, not per transcript. Every `claude` run in a directory
+writes its own session file, so a project worked on all day would otherwise
+fill the list with identical rows; they collapse onto the project, keeping
+whichever state most wants your attention and the most recent activity. A
+`×6` after the name is the number of sessions behind that row, and a project
+blocked on subagents reads "waiting on 3 agents" — counted from unanswered
+`Task` calls, since subagents run inside the parent transcript rather than
+getting files of their own.
+
 Rows are sorted by how much they want your attention, and each shows the
 project and git branch — both read from the transcript itself, so Codex
 sessions are named after their working directory rather than the dated folder

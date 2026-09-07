@@ -445,6 +445,10 @@ body[data-edge='bottom'] .panel-body {
   font-style: normal;
   color: var(--muted);
 }
+.session .who em.tally {
+  color: rgba(233, 234, 240, 0.55);
+  font-variant-numeric: tabular-nums;
+}
 .session .what {
   color: var(--muted);
   white-space: nowrap;

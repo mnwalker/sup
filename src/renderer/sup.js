@@ -67,7 +67,7 @@ function summariseCounts(counts) {
   if (!total) return null;
 
   const headline = ['input', 'agents', 'active'].find((state) => counts[state]);
-  const size = total === 1 ? '1 session' : `${total} sessions`;
+  const size = total === 1 ? '1 project' : `${total} projects`;
   return headline ? `${size} \u00b7 ${counts[headline]} ${STATE_LABELS[headline]}` : size;
 }
 
@@ -234,17 +234,29 @@ function sessionList(sessions) {
   for (const s of sessions.slice(0, MAX_SESSION_ROWS)) {
     const row = el('div', 'session');
     row.dataset.state = s.state;
-    row.title = [s.cwd, s.branch && `branch ${s.branch}`, s.id].filter(Boolean).join('\n');
+    row.title = [
+      s.cwd,
+      s.branch && `branch ${s.branch}`,
+      s.sessionCount > 1 && `${s.sessionCount} sessions`,
+      s.agents > 0 && `${s.agents} agent${s.agents === 1 ? '' : 's'} outstanding`,
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     const who = el('div', 'who');
     who.append(document.createTextNode(s.project || s.id.slice(0, 8)));
+    // Several transcripts for one project collapse into a single row.
+    if (s.sessionCount > 1) who.append(el('em', 'tally', ` \u00d7${s.sessionCount}`));
     if (s.branch) who.append(el('em', null, ` \u00b7 ${s.branch}`));
 
-    const label = STATE_LABELS[s.state] || s.state;
-    const detail = s.state === 'agents' && s.waitingOn ? `${label} (${s.waitingOn})` : label;
+    // "waiting on agents" is more useful as "waiting on 3 agents".
+    const label =
+      s.state === 'agents' && s.agents > 1
+        ? `waiting on ${s.agents} agents`
+        : STATE_LABELS[s.state] || s.state;
 
     const age = Date.now() - new Date(s.lastActivity).getTime();
-    row.append(el('span', 'dot'), who, el('div', 'what', `${detail} \u00b7 ${formatAge(age)}`));
+    row.append(el('span', 'dot'), who, el('div', 'what', `${label} \u00b7 ${formatAge(age)}`));
     wrap.append(row);
   }
 

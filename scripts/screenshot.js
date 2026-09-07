@@ -34,8 +34,8 @@ const SNAPSHOT = {
       ],
       session: { state: 'input', since: iso(-0.05), project: 'holidayrentals', counts: { input: 1, agents: 1, active: 1, stopped: 1 } },
       sessions: [
-        sess('holidayrentals', 'main', 'input', 3),
-        sess('checkout-api', 'feat/payments', 'agents', 0.6, 'Task'),
+        sess('holidayrentals', 'main', 'input', 3, { sessionCount: 6 }),
+        sess('checkout-api', 'feat/payments', 'agents', 0.6, { waitingOn: 'Task', agents: 3, sessionCount: 2 }),
         sess('sup', 'master', 'active', 0.1),
         sess('landing-site', 'main', 'stopped', 14),
       ],
@@ -87,7 +87,7 @@ function iso(hoursFromNow) {
 }
 
 /** One sample session row, `minsAgo` minutes since it last did anything. */
-function sess(project, branch, state, minsAgo, waitingOn = null) {
+function sess(project, branch, state, minsAgo, opts = {}) {
   const ageMs = minsAgo * 60 * 1000;
   return {
     id: `${project}-session`,
@@ -95,7 +95,9 @@ function sess(project, branch, state, minsAgo, waitingOn = null) {
     cwd: `/home/mark/code/${project}`,
     branch,
     state,
-    waitingOn,
+    waitingOn: opts.waitingOn || null,
+    agents: opts.agents || 0,
+    sessionCount: opts.sessionCount || 1,
     lastActivity: new Date(Date.now() - ageMs).toISOString(),
     ageMs,
   };

@@ -6,7 +6,7 @@ const path = require('path');
 const { codexHome, readJson, exists } = require('../lib/paths');
 const { getJson } = require('../lib/http');
 const { usageWindow, providerResult } = require('../lib/shape');
-const { listSessions, summarise } = require('../lib/sessions');
+const { listSessions, groupByProject, summarise } = require('../lib/sessions');
 const { tailJsonl, findJsonlFiles } = require('../lib/jsonl');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
@@ -160,12 +160,15 @@ async function collect(ctx = {}) {
     return [providerResult({ id, label, status: 'not-installed', detail: `No ${home} directory found.` })];
   }
 
-  const sessions = await listSessions(path.join(home, 'sessions'), {
-    parse: parseCodexSession,
-    kind: 'codex',
-    processes: ctx.processes || [],
-    processesKnown: Boolean(ctx.processesKnown),
-  });
+  const sessions = groupByProject(
+    await listSessions(path.join(home, 'sessions'), {
+      parse: parseCodexSession,
+      kind: 'codex',
+      processes: ctx.processes || [],
+      processesKnown: Boolean(ctx.processesKnown),
+      limit: 24,
+    })
+  );
   const session = summarise(sessions);
   const auth = readAuth(home);
 

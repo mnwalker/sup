@@ -6,7 +6,7 @@ const { execFile } = require('child_process');
 const { claudeConfigDirs, readJson } = require('../lib/paths');
 const { getJson } = require('../lib/http');
 const { usageWindow, providerResult } = require('../lib/shape');
-const { listSessions, summarise, pendingToolCall } = require('../lib/sessions');
+const { listSessions, groupByProject, summarise, pendingToolCall, pendingToolCalls } = require('../lib/sessions');
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA = 'oauth-2025-04-20';
@@ -111,7 +111,7 @@ function parseClaudeSession(records) {
     return Array.isArray(content) ? content : [];
   };
 
-  const pending = pendingToolCall(records, {
+  const hooks = {
     // A user record holding only tool_result blocks is the tail of the current
     // turn, not the start of a new one.
     isUserPrompt: (rec) =>
@@ -127,9 +127,19 @@ function parseClaudeSession(records) {
       blocks(rec)
         .filter((b) => b && b.type === 'tool_result' && b.tool_use_id)
         .map((b) => b.tool_use_id),
-  });
+  };
 
-  return { cwd, branch, lastStop, pending };
+  const unresolved = pendingToolCalls(records, hooks);
+
+  return {
+    cwd,
+    branch,
+    lastStop,
+    pending: unresolved[0] || null,
+    // Subagents run inside the parent transcript, so an unanswered Task call
+    // is one agent still out there.
+    agents: unresolved.filter((call) => call.background).length,
+  };
 }
 
 async function collectOne({ dir, label }, ctx) {
@@ -137,12 +147,15 @@ async function collectOne({ dir, label }, ctx) {
   const id = 'claude';
   const displayLabel = 'Claude Code';
 
-  const sessions = await listSessions(path.join(dir, 'projects'), {
-    parse: parseClaudeSession,
-    kind: 'claude',
-    processes: ctx.processes || [],
-    processesKnown: Boolean(ctx.processesKnown),
-  });
+  const sessions = groupByProject(
+    await listSessions(path.join(dir, 'projects'), {
+      parse: parseClaudeSession,
+      kind: 'claude',
+      processes: ctx.processes || [],
+      processesKnown: Boolean(ctx.processesKnown),
+      limit: 24,
+    })
+  );
   const session = summarise(sessions);
   const creds = readCredentials(dir);
   const envToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
