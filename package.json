@@ -1,7 +1,7 @@
 {
   "name": "supbar",
   "productName": "Sup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A screen-edge tab showing how much of your Claude Code, Codex, Cursor and Antigravity usage limits are left.",
   "license": "MIT",
   "author": {
