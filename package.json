@@ -6,7 +6,7 @@
   "license": "MIT",
   "author": {
     "name": "mnwalker",
-    "email": "m@awcode.com"
+    "email": "mark@awcode.com"
   },
   "homepage": "https://github.com/mnwalker/sup",
   "main": "src/main/main.js",
