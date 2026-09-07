@@ -1,0 +1,68 @@
+appId: io.github.mnwalker.sup
+productName: Sup
+copyright: Copyright © 2026 mnwalker
+
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+  - '!**/*.md'
+
+# sql.js ships a .wasm that must exist as a real file for the loader to read it.
+asarUnpack:
+  - '**/node_modules/sql.js/dist/*.wasm'
+
+linux:
+  target:
+    - deb
+    - AppImage
+  category: Utility
+  icon: assets/icons
+  executableName: supbar
+  syncDesktopName: true
+  synopsis: AI coding assistant usage limits on your screen edge
+  description: Shows how much of your Claude Code, Codex, Cursor and Antigravity usage limits you have left, in a tab attached to the edge of your screen.
+  desktop:
+    entry:
+      Name: Sup
+      Comment: AI coding assistant usage limits on your screen edge
+      Categories: Utility;Development;
+      Keywords: claude;codex;cursor;antigravity;usage;quota;
+      StartupNotify: 'false'
+
+deb:
+  priority: optional
+  # Only what the shipped binary actually links against (checked with ldd);
+  # electron-builder's stock list over-declares and breaks minimal installs.
+  depends:
+    - libgtk-3-0
+    - libnss3
+    - libatspi2.0-0
+    - libdrm2
+    - libgbm1
+    - libasound2
+    - libcups2
+    - libxkbcommon0
+    - libx11-6
+  recommends:
+    - libnotify4
+    - xdg-utils
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.AppImage
+
+win:
+  target:
+    - nsis
+    - portable
+  icon: assets/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Sup

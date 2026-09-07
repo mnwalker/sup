@@ -1,0 +1,174 @@
+# sup
+
+*Asking your AI coding tools what's up.*
+
+A small tab clinging to the edge of your screen that shows how much of your AI
+coding assistants' usage limits you have left.
+
+Hover it and it unfolds: every rate-limit window, how full it is, when it
+resets, and whether that assistant is currently working or waiting on you.
+
+There is nothing to sign in to. `sup` reads the credentials and session logs
+your coding tools already keep on disk, and talks to the same endpoints those
+tools do.
+
+![The tab on the screen edge](docs/preview/collapsed.png)
+
+![The tab expanded on hover](docs/preview/expanded.png)
+
+## Install
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install ./supbar_0.1.0_amd64.deb
+supbar
+```
+
+The package installs a desktop entry, so it also shows up in your launcher.
+Turn on **Start at login** from the tray menu to have it come back after a
+reboot (it writes `~/.config/autostart/supbar.desktop`).
+
+The command is `supbar`; settings and everything else still live under the
+project's own name, `sup`.
+
+### AppImage
+
+```bash
+chmod +x Sup-0.1.0-x86_64.AppImage
+./Sup-0.1.0-x86_64.AppImage
+```
+
+### Windows
+
+Run the NSIS installer, or use the portable `.exe`. Same codebase, same
+providers; the only differences are where credentials live (handled
+automatically) and that Antigravity discovery is Linux-only for now.
+
+## What it reads, and from where
+
+| Provider | Credentials | Usage source |
+| --- | --- | --- |
+| **Claude Code** | `~/.claude/.credentials.json` (`claudeAiOauth.accessToken`), or `CLAUDE_CODE_OAUTH_TOKEN` | `GET https://api.anthropic.com/api/oauth/usage` — the same endpoint behind `/usage` in the CLI |
+| **Codex** | `~/.codex/auth.json` (`tokens.access_token`) | `GET https://chatgpt.com/backend-api/wham/usage`, falling back to the `rate_limits` block in `~/.codex/sessions/**/*.jsonl` |
+| **Cursor** | `cursorAuth/accessToken` in `~/.config/Cursor/User/globalStorage/state.vscdb` | `GET https://cursor.com/api/usage-summary`, falling back to `/api/usage?user=…` |
+| **Antigravity** | the CSRF token on the running language server's command line | `RetrieveUserQuotaSummary` on the IDE's local language server (`https://127.0.0.1:<port>`) |
+
+Multiple Claude accounts are picked up automatically: anything in
+`CLAUDE_CONFIG_DIR`, plus `~/.claude` and any `~/.claude-<name>` directory, each
+shown as its own ring.
+
+### Privacy
+
+Credentials are read from disk and sent only to the service that issued them.
+Nothing is uploaded anywhere else, there is no telemetry, and `sup` never writes
+to your tools' credential files — if a Claude token has expired it says so and
+asks you to start Claude Code, rather than racing it for the file.
+
+### Session state
+
+The "working / waiting on you" pip is a heuristic. The CLIs do not publish a
+status file, so `sup` looks at the transcript each one already writes
+(`~/.claude/projects/**/*.jsonl`, `~/.codex/sessions/**/*.jsonl`) and reads the
+last record: a trailing tool call means it is still going, a finished assistant
+message means it is your turn, and nothing for twenty minutes means idle.
+
+## Configuration
+
+Everything lives in `~/.config/sup/settings.json`, and the common options are in
+the tray menu (edge, screen, which providers to show, transparency, start at
+login).
+
+```jsonc
+{
+  "edge": "right",          // top | bottom | left | right
+  "display": "primary",     // "primary" | "cursor" | display index
+  "offset": 0,              // pixels along the edge, away from centre
+  "collapsedWidth": 190,    // the tab's length along its edge
+  "collapsedHeight": 28,    // and its depth into the screen
+  "expandedWidth": 400,
+  "expandedHeight": 420,
+  "pollIntervalMs": 180000, // providers enforce their own floor as well
+  "enabled": { "claude": true, "codex": true, "cursor": true, "antigravity": true },
+  "transparent": true,      // set false if you have no compositor
+  "windowType": "toolbar",  // X11 window type hint
+  "cursorCookie": null,     // "<userId>::<jwt>" if you only sign in on the web
+  "warnAt": 75,
+  "dangerAt": 90
+}
+```
+
+### Wayland
+
+Wayland gives applications no way to place a window at a fixed screen position,
+so `sup` asks Chromium for X11 and runs through XWayland, where the tab lands
+exactly where you put it. If you would rather run natively, set
+`SUP_OZONE=wayland` — it will still work, but your compositor decides where the
+window goes.
+
+## Troubleshooting
+
+Run the probe to see exactly what each provider found and why:
+
+```bash
+npm run probe               # all providers
+npm run probe -- cursor     # one of them
+npm run probe -- antigravity --raw   # dump the language server's replies
+```
+
+- **`ERROR:...Add _NET_WM_WINDOW_TYPE_TOOLBAR to kAtomsToCache` on startup** — a
+  harmless Electron log about its X11 atom cache; the tab still gets the right
+  window type.
+- **A black rectangle instead of a tab** — no compositor is running. Set
+  `"transparent": false`, or untick *Transparent background* in the tray menu.
+- **The tab sits behind a panel or dock** — some window managers ignore
+  always-on-top for `toolbar` windows. Try `"windowType": "notification"` or
+  `"dock"`.
+- **Claude shows "token rejected"** — the stored access token expired. Start
+  Claude Code once and it will refresh it.
+- **Cursor shows "not signed in" although it is** — Cursor had not flushed its
+  SQLite write-ahead log yet. Quit Cursor once, or paste a session cookie into
+  `cursorCookie`.
+- **Antigravity shows "not running"** — quota is only readable while the IDE is
+  open; it lives in the language server, not on disk.
+
+## Development
+
+```bash
+npm install
+npm start          # run the app
+npm test           # parser and placement tests, no Electron needed
+npm run dist:deb   # build dist/supbar_<version>_amd64.deb
+npm run dist:linux # deb + AppImage
+npm run dist:win   # NSIS installer + portable exe (run on Windows, or with wine)
+
+node scripts/make-icons.js                    # regenerate assets/icons from code
+npx electron scripts/screenshot.js            # regenerate docs/preview from the real UI
+SUP_DEV=1 npm start                           # log provider results and window bounds
+```
+
+### Continuous integration
+
+`docs/github-actions-build.yml` runs the tests, then builds the Linux packages
+on `ubuntu-latest` and the Windows installers on `windows-latest`, attaching
+everything to a release on a `v*` tag. Copy it into place to enable it:
+
+```bash
+mkdir -p .github/workflows
+cp docs/github-actions-build.yml .github/workflows/build.yml
+```
+
+(It ships outside `.github/` because pushing workflow files needs a token with
+the `workflow` scope.)
+
+### Adding a provider
+
+Drop a module in `src/main/providers/` exporting `{ id, label, minIntervalMs,
+collect }`, where `collect()` resolves to an array of results built with the
+helpers in `src/main/lib/shape.js`, then register it in
+`src/main/providers/index.js`. The renderer needs no changes — it draws whatever
+windows a provider reports.
+
+## Licence
+
+MIT.

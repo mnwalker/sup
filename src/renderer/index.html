@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:;" />
+    <title>Sup</title>
+    <link rel="stylesheet" href="sup.css" />
+  </head>
+  <body data-edge="right" data-state="collapsed">
+    <div class="stage">
+      <div class="pill" id="pill">
+        <span class="corner corner-start" aria-hidden="true"></span>
+        <span class="corner corner-end" aria-hidden="true"></span>
+        <div class="rings" id="rings"></div>
+      </div>
+      <section class="panel" id="panel" aria-label="AI coding assistant usage">
+        <div class="panel-body" id="panelBody"></div>
+        <footer class="panel-foot">
+          <span id="updatedAt">—</span>
+          <button type="button" id="refresh">Refresh</button>
+        </footer>
+      </section>
+    </div>
+    <script src="sup.js"></script>
+  </body>
+</html>

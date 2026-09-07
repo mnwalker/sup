@@ -1,0 +1,34 @@
+{
+  "name": "supbar",
+  "productName": "Sup",
+  "version": "0.1.0",
+  "description": "A screen-edge tab showing how much of your Claude Code, Codex, Cursor and Antigravity usage limits are left.",
+  "license": "MIT",
+  "author": {
+    "name": "mnwalker",
+    "email": "m@awcode.com"
+  },
+  "homepage": "https://github.com/mnwalker/sup",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "SUP_DEV=1 electron .",
+    "probe": "node scripts/probe.js",
+    "test": "node --test test/*.test.js",
+    "dist:deb": "electron-builder --linux deb",
+    "dist:linux": "electron-builder --linux deb AppImage",
+    "dist:win": "electron-builder --win nsis portable",
+    "pack": "electron-builder --dir"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.0"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "desktopName": "supbar.desktop"
+}
