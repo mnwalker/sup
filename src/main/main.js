@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, shell, nativeImage, powerMonitor } = require('electron');
 
 const settings = require('./settings');
 const placement = require('./placement');
@@ -77,10 +77,29 @@ function areaFor(config) {
   return config.useWorkArea ? display.workArea : display.bounds;
 }
 
+/**
+ * While the tab is being dragged it follows the pointer without touching the
+ * settings file; the placement is only saved when it is dropped.
+ */
+let dragPlacement = null;
+
+function currentConfig() {
+  const config = settings.load();
+  return dragPlacement ? { ...config, ...dragPlacement } : config;
+}
+
+function placementAt(point) {
+  const displays = screen.getAllDisplays();
+  const display = screen.getDisplayNearestPoint(point);
+  const index = Math.max(0, displays.findIndex((d) => d.id === display.id));
+  const area = settings.load().useWorkArea ? display.workArea : display.bounds;
+  return { ...placement.snapToEdge(point, area), display: index };
+}
+
 function applyBounds() {
   if (!win) return;
-  const config = settings.load();
-  const size = expanded ? placement.expandedSize(config) : placement.collapsedSize(config);
+  const config = currentConfig();
+  const size = expanded || FIXED_SIZE ? placement.expandedSize(config) : placement.collapsedSize(config);
   const bounds = placement.boundsFor(config, areaFor(config), size);
   win.setBounds(bounds);
   if (process.env.SUP_DEV) {
@@ -107,7 +126,7 @@ function showWindow(reason) {
 
 function createWindow() {
   const config = settings.load();
-  const size = placement.collapsedSize(config);
+  const size = FIXED_SIZE ? placement.expandedSize(config) : placement.collapsedSize(config);
   const bounds = placement.boundsFor(config, areaFor(config), size);
 
   const options = {
@@ -140,6 +159,9 @@ function createWindow() {
 
   const created = new BrowserWindow(options);
   win = created;
+  pointerThrough = null;
+  passPointerThrough(true);
+  watchPointer();
 
   win.setAlwaysOnTop(true, config.alwaysOnTopLevel || 'screen-saver');
   // macOS and Linux only; on Windows older Electron builds threw here.
@@ -155,6 +177,13 @@ function createWindow() {
 
   win.webContents.on('did-fail-load', (_e, code, description) => {
     console.error(`Sup: the tab failed to load (${code} ${description}).`);
+  });
+
+  win.webContents.on('render-process-gone', (_e, details) => {
+    // A window already replaced (or shut down on purpose) is not news.
+    if (win !== created || details.reason === 'clean-exit') return;
+    console.error(`Sup: the tab's renderer went away (${details.reason}); rebuilding it.`);
+    scheduleRebuild();
   });
 
   win.on('closed', () => {
@@ -179,14 +208,102 @@ function recreateWindow() {
   createWindow();
 }
 
+/**
+ * The tab must never be silently gone. Sleep, closing the lid onto an
+ * external display (clamshell) or a display change can take Chromium's GPU
+ * process down, and with it the page: the window stays on screen, fully
+ * transparent, with nothing drawn in it, and nothing ever redraws it. So when
+ * the renderer or GPU process dies, after waking, and whenever a periodic
+ * check finds the page dead, build a fresh window.
+ */
+let rebuildTimer = null;
+
+function scheduleRebuild(delayMs = 1500) {
+  clearTimeout(rebuildTimer);
+  // Give Chromium a moment to bring its GPU process back first.
+  rebuildTimer = setTimeout(() => {
+    rebuildTimer = null;
+    recreateWindow();
+  }, delayMs);
+}
+
+function pageIsDead() {
+  if (!win || win.isDestroyed()) return true;
+  const wc = win.webContents;
+  try {
+    return wc.isDestroyed() || wc.isCrashed() || !wc.mainFrame || wc.mainFrame.isDestroyed();
+  } catch {
+    // Touching a disposed frame throws: that is an answer too.
+    return true;
+  }
+}
+
+function watchHealth() {
+  app.on('child-process-gone', (_e, details) => {
+    if (details.type !== 'GPU') return;
+    console.error(`Sup: the GPU process went away (${details.reason}); rebuilding the tab.`);
+    scheduleRebuild();
+  });
+
+  // Rebuilding on wake is cheap and catches what no event reports.
+  powerMonitor.on('resume', () => scheduleRebuild(3000));
+  powerMonitor.on('unlock-screen', () => {
+    if (pageIsDead()) scheduleRebuild();
+  });
+
+  const timer = setInterval(() => {
+    if (!rebuildTimer && pageIsDead()) {
+      console.error('Sup: found the tab dead; rebuilding it.');
+      scheduleRebuild(0);
+    }
+  }, 30000);
+  if (timer.unref) timer.unref();
+}
+
 function sendConfig() {
-  if (win && !win.isDestroyed()) win.webContents.send('sup:config', settings.load());
+  if (win && !win.isDestroyed()) win.webContents.send('sup:config', currentConfig());
+}
+
+/**
+ * On macOS and Windows the window never changes size. Resizing a transparent
+ * window there is not atomic: the new size lands a few frames before the new
+ * position, so every hover in or out flashed the tab (or a long strip of the
+ * panel) at the wrong spot. Instead the window stays panel-sized and, while
+ * collapsed, lets the pointer through to whatever is underneath.
+ *
+ * A window that lets the pointer through gets no hover events on macOS (even
+ * with `forward`), so the main process watches the pointer itself and stops
+ * letting it through while it is over the tab; the page then sees an ordinary
+ * hover. Linux keeps the resizing window, where the flash was never seen.
+ */
+const FIXED_SIZE = process.platform !== 'linux';
+const POINTER_POLL_MS = 100;
+
+let pointerThrough = null;
+let pointerTimer = null;
+
+function passPointerThrough(through) {
+  if (!FIXED_SIZE || !win || win.isDestroyed() || pointerThrough === through) return;
+  pointerThrough = through;
+  win.setIgnoreMouseEvents(through, { forward: true });
+}
+
+function watchPointer() {
+  if (!FIXED_SIZE || pointerTimer) return;
+  pointerTimer = setInterval(() => {
+    if (!win || win.isDestroyed() || expanded || dragPlacement) return;
+    const config = currentConfig();
+    const tab = placement.tabRect(config.edge, win.getBounds(), placement.collapsedSize(config));
+    passPointerThrough(!placement.contains(tab, screen.getCursorScreenPoint()));
+  }, POINTER_POLL_MS);
+  if (pointerTimer.unref) pointerTimer.unref();
 }
 
 function setExpanded(next) {
   if (expanded === next || !win) return;
   expanded = next;
-  applyBounds();
+  if (FIXED_SIZE) passPointerThrough(!next);
+  else applyBounds();
 }
 
 function createTray() {
@@ -258,8 +375,12 @@ function refreshTrayMenu() {
       {
         label: 'Show tab (reset position)',
         click: () => {
+          // A tab dragged onto a display that has since been unplugged would
+          // otherwise stay lost, so this really does reset where it sits.
+          settings.save({ display: 'primary', offset: 0 });
           if (!win || win.isDestroyed()) createWindow();
           else {
+            sendConfig();
             win.showInactive();
             applyBounds();
           }
@@ -310,6 +431,35 @@ function wireIpc() {
     collapseTimer = setTimeout(() => setExpanded(false), 180);
   });
 
+  ipcMain.on('sup:drag-start', () => {
+    clearTimeout(collapseTimer);
+    dragPlacement = {};
+    setExpanded(false);
+    // The drag's own pointer events must keep arriving until it is dropped.
+    passPointerThrough(false);
+  });
+
+  ipcMain.on('sup:drag-move', (_e, point) => {
+    if (!dragPlacement || !point) return;
+    const next = placementAt(point);
+    const edgeChanged = next.edge !== currentConfig().edge;
+    dragPlacement = next;
+    applyBounds();
+    // The tab rotates when it moves to an edge with the other orientation.
+    if (edgeChanged) sendConfig();
+  });
+
+  ipcMain.on('sup:drag-end', (_e, point) => {
+    if (!dragPlacement) return;
+    const dropped = point ? placementAt(point) : dragPlacement;
+    dragPlacement = null;
+    passPointerThrough(!expanded);
+    if (dropped.edge) settings.save(dropped);
+    applyBounds();
+    sendConfig();
+    refreshTrayMenu();
+  });
+
   ipcMain.on('sup:refresh', () => poller.refreshNow());
   ipcMain.on('sup:open-settings', () => shell.openPath(settings.FILE));
 
@@ -350,6 +500,7 @@ function main() {
     wireIpc();
     createWindow();
     createTray();
+    watchHealth();
     poller.start();
 
     screen.on('display-metrics-changed', applyBounds);

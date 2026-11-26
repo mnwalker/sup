@@ -5,6 +5,7 @@ const RING_C = 2 * Math.PI * RING_R;
 
 const els = {
   body: document.body,
+  pill: document.getElementById('pill'),
   rings: document.getElementById('rings'),
   panelBody: document.getElementById('panelBody'),
   updatedAt: document.getElementById('updatedAt'),
@@ -42,7 +43,13 @@ function formatReset(iso) {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `resets in ${hours}h ${mins % 60}m`;
   const days = Math.floor(hours / 24);
-  return `resets in ${days}d ${hours % 24}h`;
+  // A countdown in days leaves the reader to work out which day that is, so
+  // name it. Within the week the weekday is unambiguous; beyond it, the date.
+  // (A date is clear enough by itself, and the line has no room to spare.)
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (days >= 6) return `resets ${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${time}`;
+  return `resets ${at.toLocaleDateString('en-US', { weekday: 'short' })} ${time} (${days}d ${hours % 24}h)`;
 }
 
 const STATE_LABELS = {
@@ -290,21 +297,101 @@ function applyConfig(next) {
 let hovering = false;
 
 function setHovering(next) {
-  if (hovering === next) return;
+  if (dragging || hovering === next) return;
   hovering = next;
   els.body.dataset.state = next ? 'expanded' : 'collapsed';
   if (next) window.sup.expand();
   else window.sup.collapse();
 }
 
-document.addEventListener('mouseenter', () => setHovering(true), true);
-document.addEventListener('mouseleave', () => setHovering(false), true);
-// Some window managers deliver the first pointer event as mouseover rather than
-// mouseenter, so treat a move over the document as a hover too.
-document.addEventListener('mouseover', () => setHovering(true));
+/* While collapsed, only the tab itself opens the panel. On macOS and Windows
+   the window stays panel-sized and passes the pointer through, so moves over
+   the empty part of it still arrive here and must not count. Once open, the
+   whole window is the panel, and leaving it closes again. */
+function overTab(event) {
+  return Boolean(event.target && event.target.closest && event.target.closest('.pill'));
+}
+
+function hoverFrom(event) {
+  if (!hovering && overTab(event)) setHovering(true);
+}
+
+document.addEventListener('mouseover', hoverFrom);
+document.addEventListener('mousemove', hoverFrom);
+// Only leaving the whole page closes it. (A capturing mouseleave on document
+// fires for every element the pointer leaves, so moving from the tab onto the
+// panel closed the panel before it could be used.)
+document.documentElement.addEventListener('mouseleave', () => setHovering(false));
 document.addEventListener('mouseout', (event) => {
   if (!event.relatedTarget) setHovering(false);
 });
+
+/*
+ * Dragging the tab. A press only becomes a drag once the pointer has moved a
+ * few pixels, so an ordinary hover or click on the tab behaves as before. The
+ * main process snaps the tab to whichever screen edge is nearest the pointer;
+ * pointer capture keeps the events coming once the pointer leaves the window.
+ */
+const DRAG_THRESHOLD = 5;
+let dragging = false;
+let press = null;
+let pendingPoint = null;
+
+function screenPoint(event) {
+  return { x: Math.round(event.screenX), y: Math.round(event.screenY) };
+}
+
+els.pill.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  press = screenPoint(event);
+  els.pill.setPointerCapture(event.pointerId);
+});
+
+els.pill.addEventListener('pointermove', (event) => {
+  if (!press) return;
+  const point = screenPoint(event);
+  if (!dragging) {
+    if (Math.hypot(point.x - press.x, point.y - press.y) < DRAG_THRESHOLD) return;
+    dragging = true;
+    hovering = false;
+    els.body.dataset.state = 'collapsed';
+    els.body.dataset.dragging = 'true';
+    window.sup.dragStart();
+  }
+  // One move per frame is plenty; the window cannot be repositioned faster.
+  if (!pendingPoint) {
+    requestAnimationFrame(() => {
+      window.sup.dragMove(pendingPoint);
+      pendingPoint = null;
+    });
+  }
+  pendingPoint = point;
+});
+
+function endPress(event) {
+  if (!press) return;
+  press = null;
+  if (!dragging) return;
+  dragging = false;
+  delete els.body.dataset.dragging;
+  window.sup.dragEnd(event.type === 'pointerup' ? screenPoint(event) : null);
+}
+
+els.pill.addEventListener('pointerup', endPress);
+els.pill.addEventListener('pointercancel', endPress);
+
+/*
+ * The main process shrinks the window a moment after the pointer leaves (so
+ * the panel does not flicker at the seam), which means the page is "collapsed"
+ * for a few frames inside a window still sized for the panel. Track the real
+ * window size, so anything that only fits the small window waits for it.
+ * Collapsed, the window is one tab deep (28px); open, it is hundreds.
+ */
+function syncWindowSize() {
+  els.body.dataset.window = Math.min(window.innerWidth, window.innerHeight) > 60 ? 'open' : 'tab';
+}
+window.addEventListener('resize', syncWindowSize);
+syncWindowSize();
 
 els.refresh.addEventListener('click', () => window.sup.refresh());
 els.quit.addEventListener('click', () => window.sup.quit());

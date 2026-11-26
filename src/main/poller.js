@@ -51,8 +51,35 @@ class Poller extends EventEmitter {
     return Math.min(base * 2 ** Math.min(entry.failures, 5), MAX_BACKOFF_MS);
   }
 
+  /**
+   * A provider that can tell when its credentials changed (another account
+   * signed in) is refreshed on the next tick rather than at its next slot, and
+   * any backoff earned by the old account is forgotten.
+   */
+  async checkCredentials(config) {
+    await Promise.all(
+      providers.map(async (provider) => {
+        if (!provider.fingerprint || config.enabled[provider.id] === false) return;
+        const entry = this.entryFor(provider.id);
+        let print;
+        try {
+          print = await provider.fingerprint();
+        } catch {
+          return;
+        }
+        if (entry.fingerprint !== undefined && print !== entry.fingerprint) {
+          entry.nextRunAt = 0;
+          entry.failures = 0;
+          if (process.env.SUP_DEV) console.log(`[sup] ${provider.id} credentials changed; refreshing now`);
+        }
+        entry.fingerprint = print;
+      })
+    );
+  }
+
   async tick() {
     const config = settings.load();
+    await this.checkCredentials(config);
     const now = Date.now();
 
     const due = providers.filter((p) => {

@@ -343,3 +343,32 @@ test('shape: the fullest window is the one the tab shows', () => {
   assert.equal(worst.key, 'b');
   assert.equal(worstWindow([{ key: 'a', percent: null }]), null);
 });
+
+test('placement: a drop snaps to the nearest edge, offset from its centre', () => {
+  const area = { x: 0, y: 0, width: 1920, height: 1080 };
+  assert.deepEqual(placement.snapToEdge({ x: 1910, y: 300 }, area), { edge: 'right', offset: -240 });
+  assert.deepEqual(placement.snapToEdge({ x: 5, y: 900 }, area), { edge: 'left', offset: 360 });
+  assert.deepEqual(placement.snapToEdge({ x: 1500, y: 4 }, area), { edge: 'top', offset: 540 });
+  assert.deepEqual(placement.snapToEdge({ x: 200, y: 1070 }, area), { edge: 'bottom', offset: -760 });
+});
+
+test('placement: snapping works on a display that does not start at 0,0', () => {
+  // A second screen to the left of the primary one.
+  const area = { x: -1440, y: 0, width: 1440, height: 900 };
+  const snapped = placement.snapToEdge({ x: -1430, y: 450 }, area);
+  assert.deepEqual(snapped, { edge: 'left', offset: 0 });
+  const bounds = placement.boundsFor({ ...snapped }, area, { width: 28, height: 190 });
+  assert.deepEqual(bounds, { x: -1440, y: 355, width: 28, height: 190 });
+});
+
+test('placement: the tab sits against the edge, centred, inside a panel-sized window', () => {
+  const win = { x: 1520, y: 280, width: 400, height: 520 };
+  const tab = { width: 28, height: 190 };
+  const right = placement.tabRect('right', win, tab);
+  assert.deepEqual(right, { x: 1892, y: 445, width: 28, height: 190 });
+  assert.equal(placement.contains(right, { x: 1900, y: 500 }), true);
+  assert.equal(placement.contains(right, { x: 1700, y: 500 }), false);
+  assert.deepEqual(placement.tabRect('top', { x: 760, y: 0, width: 400, height: 520 }, { width: 190, height: 28 }), {
+    x: 865, y: 0, width: 190, height: 28,
+  });
+});

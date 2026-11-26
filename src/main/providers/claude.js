@@ -276,11 +276,29 @@ async function collect(ctx = {}) {
   return Promise.all(dirs.map((d) => collectOne(d, ctx)));
 }
 
+/**
+ * A digest of every account's current token, so the poller can tell when the
+ * signed-in account changes (switching accounts in Claude Code or its VS Code
+ * extension rewrites the token) and refresh at once instead of showing the
+ * previous account's windows for up to the full polling interval.
+ */
+async function fingerprint() {
+  const tokens = await Promise.all(
+    claudeConfigDirs().map(async ({ dir }) => {
+      const creds = await readCredentials(dir);
+      return `${dir}=${(creds && creds.accessToken) || ''}`;
+    })
+  );
+  tokens.push(`env=${process.env.CLAUDE_CODE_OAUTH_TOKEN || ''}`);
+  return crypto.createHash('sha256').update(tokens.join('\n')).digest('hex');
+}
+
 module.exports = {
   id: 'claude',
   label: 'Claude Code',
   minIntervalMs: MIN_INTERVAL_MS,
   collect,
+  fingerprint,
   // exported for tests
   _internal: { windowsFromUsage, parseClaudeSession, readCredentials },
 };

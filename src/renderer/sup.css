@@ -78,6 +78,26 @@ body {
   background: radial-gradient(circle at 100% 100%, transparent 11px, var(--bg) 11.5px);
 }
 
+/* The shoulders only read as the screen edge folding into the tab while the
+   tab stands alone. With the panel open beside it they are two loose spikes —
+   and on a screen edge that borders another display, they point straight at
+   it. The collapsed window crops them on side edges anyway. They stay hidden
+   until the window has actually shrunk back, not just the page, or they flash
+   up for the moment between the two. */
+body[data-state='expanded'] .corner,
+body[data-window='open'] .corner,
+body[data-dragging] .corner {
+  display: none;
+}
+
+.pill {
+  cursor: grab;
+}
+body[data-dragging],
+body[data-dragging] .pill {
+  cursor: grabbing;
+}
+
 body[data-edge='bottom'] .stage {
   flex-direction: column-reverse;
 }

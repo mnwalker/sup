@@ -45,9 +45,45 @@ function boundsFor(config, area, size) {
   return { x, y: clamp(y, y0, y0 + area.height - size.height), ...size };
 }
 
+/**
+ * Where a tab dropped at `point` belongs on `area`: the edge nearest the
+ * point, and how far along that edge from its centre. The result plugs
+ * straight back into boundsFor as { edge, offset }.
+ */
+function snapToEdge(point, area) {
+  const distances = {
+    left: point.x - area.x,
+    right: area.x + area.width - point.x,
+    top: point.y - area.y,
+    bottom: area.y + area.height - point.y,
+  };
+  const edge = Object.keys(distances).reduce((a, b) => (distances[b] < distances[a] ? b : a));
+  const offset = isVertical(edge)
+    ? Math.round(point.y - (area.y + area.height / 2))
+    : Math.round(point.x - (area.x + area.width / 2));
+  return { edge, offset };
+}
+
+/**
+ * Where the tab sits inside a panel-sized window: against the screen edge,
+ * centred along it (the page lays it out the same way).
+ */
+function tabRect(edge, win, tab) {
+  if (isVertical(edge)) {
+    const x = edge === 'left' ? win.x : win.x + win.width - tab.width;
+    return { x, y: Math.round(win.y + (win.height - tab.height) / 2), ...tab };
+  }
+  const y = edge === 'top' ? win.y : win.y + win.height - tab.height;
+  return { x: Math.round(win.x + (win.width - tab.width) / 2), y, ...tab };
+}
+
+function contains(rect, point) {
+  return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
+}
+
 function clamp(value, min, max) {
   if (max < min) return min;
   return Math.min(Math.max(value, min), max);
 }
 
-module.exports = { isVertical, sizeFor, collapsedSize, expandedSize, boundsFor, clamp };
+module.exports = { isVertical, sizeFor, collapsedSize, expandedSize, boundsFor, snapToEdge, tabRect, contains, clamp };
